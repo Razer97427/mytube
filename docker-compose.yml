@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+
+  # ─────────────────────────────────────────
+  # 1. Générateur automatique de po_token
+  #    Renouvelle le token YouTube toutes les ~7 jours
+  # ─────────────────────────────────────────
+  pot-provider:
+    image: ghcr.io/brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    ports:
+      - "4416:4416"
+    volumes:
+      - pot_data:/app/data
+
+  # ─────────────────────────────────────────
+  # 2. Backend API (Python + yt-dlp)
+  #    Recherche YouTube, proxy vidéo, SponsorBlock
+  # ─────────────────────────────────────────
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - POT_PROVIDER_URL=http://pot-provider:4416
+      - SPONSORBLOCK_API=https://sponsor.ajay.app
+    depends_on:
+      - pot-provider
+    volumes:
+      - yt_cache:/app/cache
+
+  # ─────────────────────────────────────────
+  # 3. Frontend (interface web PWA)
+  #    Installable sur iOS via "Ajouter à l'écran d'accueil"
+  # ─────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - BACKEND_URL=http://backend:8080
+    depends_on:
+      - backend
+
+volumes:
+  pot_data:
+  yt_cache:
