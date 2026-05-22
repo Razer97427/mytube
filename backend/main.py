@@ -38,11 +38,14 @@ def get_ydl_opts(extra: dict = {}) -> dict:
     return opts
 
 
-async def fetch_pot_token() -> dict:
+async def fetch_pot_token(video_id: str = "dQw4w9WgXcQ") -> dict:
     """Récupère le po_token depuis le provider"""
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{POT_PROVIDER_URL}/get_pot", params={"videoId": "dQw4w9WgXcQ"})
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{POT_PROVIDER_URL}/get_pot",
+                json={"videoId": video_id}
+            )
             if r.status_code == 200:
                 data = r.json()
                 return {
@@ -97,13 +100,14 @@ async def search(q: str = Query(..., min_length=1), limit: int = 20):
 async def get_video_info(video_id: str):
     """Récupère les métadonnées d'une vidéo"""
     try:
-        pot = await fetch_pot_token()
+        pot = await fetch_pot_token(video_id)
         opts = get_ydl_opts()
 
         if pot.get("po_token"):
             opts["extractor_args"] = {
                 "youtube": {
                     "po_token": [f"web+{pot['po_token']}"],
+                    "visitor_data": [pot["visitor_data"]],
                     "player_client": ["web"],
                 }
             }
@@ -147,7 +151,7 @@ async def get_video_info(video_id: str):
 async def stream_video(video_id: str, quality: int = 720):
     """Proxy stream vidéo — contourne les restrictions de domaine"""
     try:
-        pot = await fetch_pot_token()
+        pot = await fetch_pot_token(video_id)
         opts = get_ydl_opts({
             "format": f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best",
         })
@@ -156,6 +160,7 @@ async def stream_video(video_id: str, quality: int = 720):
             opts["extractor_args"] = {
                 "youtube": {
                     "po_token": [f"web+{pot['po_token']}"],
+                    "visitor_data": [pot["visitor_data"]],
                     "player_client": ["web"],
                 }
             }
