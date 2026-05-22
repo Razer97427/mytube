@@ -153,6 +153,16 @@ async def get_video_info(video_id: str):
         # Trier par qualité décroissante
         formats.sort(key=lambda x: x.get("quality") or 0, reverse=True)
 
+        # Pré-cache les URLs iOS : évite un 2e appel yt-dlp quand le lecteur
+        # demande /api/stream juste après. Les URLs YouTube sont valides ~6 h.
+        for f in info.get("formats", []):
+            vc, ac, h, u = (f.get("vcodec", ""), f.get("acodec", ""),
+                            f.get("height"), f.get("url"))
+            if vc.startswith("avc") and ac.startswith("mp4a") and h and u and f.get("ext") == "mp4":
+                for q in (360, 480, 720, 1080, 1440, 2160):
+                    if h <= q and not _cache_get(video_id, q):
+                        _cache_set(video_id, q, u)
+
         return {
             "id": video_id,
             "title": info.get("title", ""),
@@ -163,7 +173,7 @@ async def get_video_info(video_id: str):
             "thumbnail": info.get("thumbnail", f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"),
             "views": info.get("view_count"),
             "published": info.get("upload_date", ""),
-            "formats": formats[:5],  # Top 5 qualités
+            "formats": formats[:5],
             "stream_url": f"/api/stream/{video_id}",
         }
 
@@ -258,6 +268,43 @@ async def get_sponsorblock(video_id: str):
                 return {"segments": []}
     except Exception:
         return {"segments": []}
+
+
+@app.get("/api/related/{video_id}")
+async def get_related(video_id: str, q: str = ""):
+    """Recommandations basées sur le titre / tags de la vidéo.
+    Accepte ?q=... pour éviter une extraction yt-dlp supplémentaire
+    quand le client connaît déjà le titre."""
+    try:
+        if not q:
+            opts = get_ydl_opts({"extract_flat": True})
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                meta = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=False
+                )
+            tags = meta.get("tags") or []
+            q = " ".join(tags[:4]) if tags else meta.get("title", "")
+
+        results = []
+        with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
+            search = ydl.extract_info(f"ytsearch15:{q}", download=False)
+            for entry in (search.get("entries") or []):
+                if not entry or entry.get("id") == video_id:
+                    continue
+                results.append({
+                    "id": entry.get("id", ""),
+                    "title": entry.get("title", ""),
+                    "channel": entry.get("channel") or entry.get("uploader", ""),
+                    "duration": entry.get("duration"),
+                    "thumbnail": (entry.get("thumbnail")
+                                  or f"https://i.ytimg.com/vi/{entry.get('id', '')}/hqdefault.jpg"),
+                    "views": entry.get("view_count"),
+                })
+
+        return {"results": results[:12]}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/trending")
