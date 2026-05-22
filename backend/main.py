@@ -4,10 +4,9 @@ Proxy YouTube sans pubs, avec SponsorBlock
 """
 
 import os
-import json
-import asyncio
+import time
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
@@ -23,6 +22,19 @@ app.add_middleware(
 
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 SPONSORBLOCK_API = os.getenv("SPONSORBLOCK_API", "https://sponsor.ajay.app")
+
+# ─── Cache URL flux (iOS envoie 3-4 requêtes Range par lecture) ───────────────
+# Les URLs YouTube sont valides ~6 h ; on cache 1 h pour être conservateur.
+_stream_cache: dict[str, tuple[str, float]] = {}
+
+def _cache_get(video_id: str, quality: int) -> str | None:
+    entry = _stream_cache.get(f"{video_id}_{quality}")
+    if entry and time.time() < entry[1]:
+        return entry[0]
+    return None
+
+def _cache_set(video_id: str, quality: int, url: str) -> None:
+    _stream_cache[f"{video_id}_{quality}"] = (url, time.time() + 3600)
 
 # ─── Helpers yt-dlp ──────────────────────────────────────────────────────────
 
@@ -55,6 +67,18 @@ async def fetch_pot_token(video_id: str = "dQw4w9WgXcQ") -> dict:
     except Exception:
         pass
     return {}
+
+
+def _ios_format(quality: int) -> str:
+    # iOS Safari n'accepte que H.264 (avc1) + AAC (mp4a) dans un conteneur MP4.
+    # VP9 / AV1 / WebM → écran noir ou "impossible de lire la vidéo".
+    return (
+        f"bestvideo[height<={quality}][vcodec^=avc][ext=mp4]"
+        f"+bestaudio[acodec^=mp4a][ext=m4a]"
+        f"/best[height<={quality}][vcodec^=avc][ext=mp4]"
+        f"/best[height<={quality}][ext=mp4]"
+        f"/best"
+    )
 
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
@@ -148,38 +172,66 @@ async def get_video_info(video_id: str):
 
 
 @app.get("/api/stream/{video_id}")
-async def stream_video(video_id: str, quality: int = 720):
-    """Proxy stream vidéo — contourne les restrictions de domaine"""
+async def stream_video(video_id: str, quality: int = 720, request: Request = None):
+    """Proxy flux vidéo compatible iOS : H.264/AAC, Range requests, cache URL."""
     try:
-        pot = await fetch_pot_token(video_id)
-        opts = get_ydl_opts({
-            "format": f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best",
-        })
+        stream_url = _cache_get(video_id, quality)
 
-        if pot.get("po_token"):
-            opts["extractor_args"] = {
-                "youtube": {
-                    "po_token": [f"web+{pot['po_token']}"],
-                    "visitor_data": [pot["visitor_data"]],
-                    "player_client": ["web"],
+        if not stream_url:
+            pot = await fetch_pot_token(video_id)
+            opts = get_ydl_opts({"format": _ios_format(quality)})
+
+            if pot.get("po_token"):
+                opts["extractor_args"] = {
+                    "youtube": {
+                        "po_token": [f"web+{pot['po_token']}"],
+                        "visitor_data": [pot["visitor_data"]],
+                        "player_client": ["web"],
+                    }
                 }
-            }
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            stream_url = info.get("url") or info["requested_formats"][0]["url"]
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=False
+                )
+                stream_url = info.get("url")
+                if not stream_url and info.get("requested_formats"):
+                    stream_url = info["requested_formats"][0]["url"]
 
-        # Proxy le flux vers le client
-        async def stream_generator():
-            async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("GET", stream_url) as response:
-                    async for chunk in response.aiter_bytes(chunk_size=65536):
-                        yield chunk
+            _cache_set(video_id, quality, stream_url)
+
+        # Transmettre le header Range pour que iOS puisse seeker dans la vidéo.
+        # iOS envoie typiquement Range: bytes=0-1 pour tester, puis d'autres plages.
+        upstream_headers = {}
+        range_header = request.headers.get("Range") if request else None
+        if range_header:
+            upstream_headers["Range"] = range_header
+
+        # send(..., stream=True) retourne les headers immédiatement sans lire le body.
+        # Cela nous permet de connaître status_code / Content-Range avant de streamer.
+        client = httpx.AsyncClient(timeout=None)
+        upstream_req = httpx.Request("GET", stream_url, headers=upstream_headers)
+        upstream_resp = await client.send(upstream_req, stream=True, follow_redirects=True)
+
+        content_type = upstream_resp.headers.get("content-type", "video/mp4")
+        resp_headers = {"Accept-Ranges": "bytes"}
+        for h in ("content-length", "content-range"):
+            if h in upstream_resp.headers:
+                resp_headers[h.title()] = upstream_resp.headers[h]
+
+        async def generator():
+            try:
+                async for chunk in upstream_resp.aiter_bytes(65536):
+                    yield chunk
+            finally:
+                await upstream_resp.aclose()
+                await client.aclose()
 
         return StreamingResponse(
-            stream_generator(),
-            media_type="video/mp4",
-            headers={"Accept-Ranges": "bytes"}
+            generator(),
+            status_code=upstream_resp.status_code,
+            headers=resp_headers,
+            media_type=content_type,
         )
 
     except Exception as e:

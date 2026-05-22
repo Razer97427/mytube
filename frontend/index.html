@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="MyTube">
 <meta name="theme-color" content="#0a0a0a">
 <link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>MyTube</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -452,11 +453,20 @@ async function openVideo(videoId) {
 
 function loadStream(videoId, quality) {
   const player = document.getElementById('player');
-  const t = player.currentTime;
+  const savedTime = player.currentTime;
   player.src = `${API}/api/stream/${videoId}?quality=${quality}`;
-  player.load();
-  if (t > 0) player.currentTime = t;
-  player.play().catch(() => {});
+  // Sur iOS, currentTime ne peut être fixé qu'après loadedmetadata.
+  // Sans cet event, le seek est ignoré silencieusement.
+  if (savedTime > 0) {
+    player.addEventListener('loadedmetadata', () => {
+      player.currentTime = savedTime;
+      player.play().catch(() => {});
+    }, { once: true });
+    player.load();
+  } else {
+    player.load();
+    player.play().catch(() => {});
+  }
 }
 
 // ── SponsorBlock ─────────────────────────────────────────────────────────────
