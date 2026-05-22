@@ -7,7 +7,7 @@ services:
   #    Renouvelle le token YouTube toutes les ~7 jours
   # ─────────────────────────────────────────
   pot-provider:
-    image: ghcr.io/brainicism/bgutil-ytdlp-pot-provider:latest
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
     restart: unless-stopped
     ports:
       - "4416:4416"
