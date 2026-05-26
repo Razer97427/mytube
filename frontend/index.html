@@ -25,7 +25,7 @@
   --accent:   #ff4444;
   --accent2:  #ff6b6b;
   --radius:   12px;
-  --sidebar:  230px;
+  --sidebar:  240px;
   --safe-top:    env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
 }
@@ -36,14 +36,12 @@ html { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-s
 body { overflow-x: hidden; }
 
 /* ══ LAYOUT ══════════════════════════════════════════════════════════════════ */
-/* Desktop: sidebar fixe + contenu scrollable */
 @media (min-width: 900px) {
   body { padding-bottom: 0; }
   .mobile-header, .bottom-nav { display: none !important; }
   .sidebar { display: flex !important; }
   .app-body { margin-left: var(--sidebar); }
 }
-/* Mobile: header + bottom nav, pas de sidebar */
 @media (max-width: 899px) {
   .sidebar { display: none !important; }
   .app-body { margin-left: 0; }
@@ -55,6 +53,7 @@ body { overflow-x: hidden; }
   position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar);
   background: var(--bg); border-right: 1px solid var(--border);
   display: none; flex-direction: column; z-index: 50; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--surface3) transparent;
 }
 .sidebar-logo {
   font-size: 22px; font-weight: 700; letter-spacing: -0.6px;
@@ -63,7 +62,7 @@ body { overflow-x: hidden; }
 }
 .sidebar-logo span { color: var(--accent); }
 .sidebar-search-wrap {
-  padding: 14px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  padding: 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .sidebar-search-wrap input {
   width: 100%; background: var(--surface2); border: 1px solid var(--border);
@@ -72,7 +71,7 @@ body { overflow-x: hidden; }
 }
 .sidebar-search-wrap input:focus { border-color: var(--accent); }
 .sidebar-search-wrap input::placeholder { color: var(--text3); }
-.sidebar-nav { padding: 10px 0; flex: 1; }
+.sidebar-nav { padding: 10px 0; }
 .sidebar-btn {
   display: flex; align-items: center; gap: 14px;
   width: 100%; padding: 12px 22px;
@@ -88,6 +87,79 @@ body { overflow-x: hidden; }
   width: 3px; background: var(--accent); border-radius: 0 3px 3px 0;
 }
 .sidebar-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+/* ══ AUTH SECTION (sidebar) ══════════════════════════════════════════════════ */
+.sidebar-auth {
+  border-top: 1px solid var(--border); padding: 14px;
+  flex-shrink: 0; margin-top: auto;
+}
+.login-btn {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 10px 14px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); font-family: 'DM Sans', sans-serif;
+  font-size: 13px; font-weight: 500; border-radius: 10px;
+  cursor: pointer; transition: all .2s;
+}
+.login-btn:hover { background: var(--surface3); border-color: var(--text3); }
+.login-btn svg { width: 16px; height: 16px; }
+.user-row {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  padding: 8px 10px; border-radius: 10px; transition: background .15s;
+  position: relative;
+}
+.user-row:hover { background: var(--surface2); }
+.user-avatar-img {
+  width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+}
+.user-avatar-fallback {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; flex-shrink: 0;
+}
+.user-info { flex: 1; min-width: 0; }
+.user-name  { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-email { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-menu-dropdown {
+  position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; z-index: 100;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  display: none;
+}
+.user-menu-dropdown.open { display: block; }
+.user-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; cursor: pointer; font-size: 13px; color: var(--text2);
+  transition: background .15s; border: none; background: none;
+  width: 100%; font-family: 'DM Sans', sans-serif; text-align: left;
+}
+.user-menu-item:hover { background: var(--surface3); color: var(--text); }
+.user-menu-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+.user-menu-item.danger { color: #ff6b6b; }
+
+/* ══ SUBSCRIPTIONS SECTION (sidebar) ════════════════════════════════════════ */
+.subs-section { border-top: 1px solid var(--border); flex-shrink: 0; }
+.subs-header {
+  font-size: 10px; font-weight: 700; color: var(--text3);
+  letter-spacing: .1em; text-transform: uppercase;
+  padding: 14px 22px 8px; display: flex; align-items: center; gap: 8px;
+}
+.subs-header::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.sub-btn {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 22px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text2); font-family: 'DM Sans', sans-serif;
+  font-size: 13px; font-weight: 400; text-align: left;
+  transition: background .15s, color .15s;
+}
+.sub-btn:hover { background: var(--surface2); color: var(--text); }
+.sub-thumb {
+  width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+  background: var(--surface3);
+}
+.sub-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 
 /* ══ MOBILE HEADER ═══════════════════════════════════════════════════════════ */
 .mobile-header {
@@ -118,13 +190,21 @@ body { overflow-x: hidden; }
 }
 .search-btn:hover { background: var(--accent2); }
 .search-btn svg { width: 14px; height: 14px; }
+.mobile-auth-btn {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--surface2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background .15s;
+}
+.mobile-auth-btn:hover { background: var(--surface3); }
+.mobile-auth-btn img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+.mobile-auth-btn svg { width: 16px; height: 16px; color: var(--text2); }
 
 /* ══ MAIN ════════════════════════════════════════════════════════════════════ */
 .app-body { min-height: 100vh; }
 main { padding: 20px; max-width: 1500px; margin: 0 auto; }
 @media (min-width: 900px) { main { padding: 28px 32px; } }
 
-/* Desktop search bar in content */
 .content-search {
   display: none; gap: 10px; margin-bottom: 28px;
 }
@@ -152,6 +232,42 @@ main { padding: 20px; max-width: 1500px; margin: 0 auto; }
   margin-bottom: 18px; display: flex; align-items: center; gap: 12px;
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ══ CONTINUE WATCHING ═══════════════════════════════════════════════════════ */
+.continue-section { margin-bottom: 32px; }
+.continue-row {
+  display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px;
+  scrollbar-width: thin; scrollbar-color: var(--surface3) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.continue-row::-webkit-scrollbar { height: 4px; }
+.continue-row::-webkit-scrollbar-track { background: transparent; }
+.continue-row::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 2px; }
+.continue-card {
+  flex-shrink: 0; width: 220px; background: var(--surface); border-radius: 10px;
+  overflow: hidden; cursor: pointer; border: 1px solid transparent;
+  transition: transform .2s, box-shadow .2s, border-color .2s;
+}
+.continue-card:hover {
+  transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  border-color: var(--border);
+}
+.continue-card:active { transform: scale(.97); }
+.continue-thumb { position: relative; aspect-ratio: 16/9; background: var(--surface2); overflow: hidden; }
+.continue-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .3s; }
+.continue-card:hover .continue-thumb img { transform: scale(1.04); }
+.continue-progress-bar {
+  position: absolute; bottom: 0; left: 0; height: 3px;
+  background: var(--accent); border-radius: 0 2px 2px 0;
+  pointer-events: none;
+}
+.continue-info { padding: 8px 10px 10px; }
+.continue-title {
+  font-size: 12px; font-weight: 500; color: var(--text); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  margin-bottom: 3px;
+}
+.continue-meta { font-size: 11px; color: var(--text2); }
 
 /* ══ GRILLE VIDÉOS ═══════════════════════════════════════════════════════════ */
 .video-grid {
@@ -190,12 +306,6 @@ main { padding: 20px; max-width: 1500px; margin: 0 auto; }
   background: rgba(0,0,0,.92); color: #fff;
   font-family: 'DM Mono', monospace; font-size: 11px;
   padding: 2px 7px; border-radius: 5px; font-weight: 500;
-}
-.sb-badge {
-  position: absolute; top: 8px; right: 8px;
-  background: rgba(0,185,80,.92); color: #fff;
-  font-size: 9px; font-weight: 800; padding: 2px 6px;
-  border-radius: 4px; letter-spacing: .06em;
 }
 .card-info { padding: 12px 14px 14px; }
 .card-title {
@@ -254,7 +364,6 @@ main { padding: 20px; max-width: 1500px; margin: 0 auto; }
 }
 video { width: 100%; display: block; max-height: 66vh; background: #000; }
 
-/* Métadonnées vidéo */
 .player-title { font-size: 18px; font-weight: 600; line-height: 1.3; margin-bottom: 12px; }
 .player-channel {
   display: flex; align-items: center; gap: 12px;
@@ -403,17 +512,38 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (min-width: 900px) { .toast { bottom: 28px; } }
+
+/* ══ MOBILE AUTH SHEET ═══════════════════════════════════════════════════════ */
+.auth-sheet-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200;
+  display: none; align-items: flex-end; justify-content: center;
+  backdrop-filter: blur(6px);
+}
+.auth-sheet-backdrop.open { display: flex; }
+.auth-sheet {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 20px 20px 0 0; padding: 24px 24px calc(24px + var(--safe-bottom));
+  width: 100%; max-width: 480px; text-align: center;
+}
+.auth-sheet h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.auth-sheet p  { font-size: 14px; color: var(--text2); margin-bottom: 20px; }
+.auth-sheet .login-btn { max-width: 260px; margin: 0 auto 12px; }
+.auth-sheet-close {
+  background: none; border: none; color: var(--text3); font-family: 'DM Sans', sans-serif;
+  font-size: 13px; cursor: pointer; padding: 8px;
+}
 </style>
 </head>
 <body>
 
-<!-- ── Sidebar (desktop uniquement) ── -->
+<!-- ── Sidebar (desktop) ── -->
 <aside class="sidebar">
   <div class="sidebar-logo">My<span>Tube</span></div>
   <div class="sidebar-search-wrap">
     <input type="search" id="search-sidebar" placeholder="Rechercher…"
            onkeydown="if(event.key==='Enter') doSearch(this.value)">
   </div>
+
   <nav class="sidebar-nav">
     <button class="sidebar-btn active" id="snav-home" onclick="showHome()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -429,7 +559,24 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
       </svg>
       Tendances
     </button>
+    <button class="sidebar-btn" id="snav-history" onclick="showHistory()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      Historique
+    </button>
   </nav>
+
+  <!-- Abonnements (visible si connecté) -->
+  <div class="subs-section" id="subs-section" style="display:none">
+    <div class="subs-header">Abonnements</div>
+    <div id="subs-list"></div>
+  </div>
+
+  <!-- Section auth -->
+  <div class="sidebar-auth" id="sidebar-auth">
+    <div class="loader" style="padding:16px 0"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div></div>
+  </div>
 </aside>
 
 <!-- ── Header mobile ── -->
@@ -443,6 +590,12 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
         <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
       </svg>
     </button>
+  </div>
+  <div class="mobile-auth-btn" id="mobile-auth-btn" onclick="toggleMobileAuthSheet()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>
   </div>
 </header>
 
@@ -462,6 +615,13 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
         Rechercher
       </button>
     </div>
+
+    <!-- Section "Continuer à regarder" -->
+    <div class="continue-section" id="continue-section" style="display:none">
+      <div class="section-title">Continuer à regarder</div>
+      <div class="continue-row" id="continue-row"></div>
+    </div>
+
     <div id="content"></div>
   </div>
 
@@ -522,7 +682,20 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
     </svg>
     Tendances
   </button>
+  <button class="nav-btn" id="nav-history" onclick="showHistory()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    Historique
+  </button>
 </nav>
+
+<!-- ── Auth sheet mobile ── -->
+<div class="auth-sheet-backdrop" id="auth-sheet-backdrop" onclick="if(event.target===this)closeAuthSheet()">
+  <div class="auth-sheet" id="auth-sheet">
+    <!-- rempli dynamiquement -->
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -530,12 +703,14 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
 const API = '';
 
 // ── État ──────────────────────────────────────────────────────────────────────
-let currentVideoId  = null;
-let sbSegments      = [];
-let sbActive        = true;
-let sbCheckInterval = null;
-let relatedVideos   = [];
-let autoNextTimer   = null;
+let currentVideoId   = null;
+let currentVideoMeta = {};
+let sbSegments       = [];
+let sbActive         = true;
+let sbCheckInterval  = null;
+let relatedVideos    = [];
+let autoNextTimer    = null;
+let authState        = { authenticated: false, user: null, google_configured: false };
 
 // ── Utilitaires ───────────────────────────────────────────────────────────────
 function fmt(s) {
@@ -566,12 +741,201 @@ function showToast(msg, duration = 2200) {
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove('show'), duration);
 }
-// Génère une couleur déterministe à partir du nom de la chaîne
 function channelColor(name) {
   const palette = ['#e74c3c','#e67e22','#f39c12','#27ae60','#16a085','#2980b9','#8e44ad','#c0392b','#d35400','#1abc9c'];
   let h = 0;
   for (let i = 0; i < (name||'').length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return palette[Math.abs(h) % palette.length];
+}
+
+// ── Watch History (localStorage) ─────────────────────────────────────────────
+const HISTORY_KEY = 'mytube_history_v2';
+const MAX_HISTORY = 200;
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+}
+function saveHistory(arr) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch {}
+}
+function saveProgress(videoId, title, thumbnail, channel, duration, currentTime) {
+  if (!videoId || duration < 10) return;
+  const pct = currentTime / duration;
+  // Ne pas sauvegarder si moins de 5% ou plus de 95% (terminé)
+  if (pct < 0.05) return;
+  const hist = getHistory().filter(h => h.id !== videoId);
+  hist.unshift({
+    id: videoId, title, thumbnail, channel, duration,
+    currentTime: pct > 0.95 ? 0 : currentTime,
+    pct: pct > 0.95 ? 1 : pct,
+    ts: Date.now(),
+  });
+  saveHistory(hist.slice(0, MAX_HISTORY));
+}
+function getContinueWatching() {
+  return getHistory().filter(h => h.pct > 0.05 && h.pct < 0.95).slice(0, 10);
+}
+function getWatchedHistory() {
+  return getHistory().slice(0, 60);
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function initAuth() {
+  try {
+    const r = await fetch(`${API}/auth/status`);
+    authState = await r.json();
+  } catch {
+    authState = { authenticated: false, user: null, google_configured: false };
+  }
+  renderSidebarAuth();
+  renderMobileAuthBtn();
+  if (authState.authenticated) {
+    loadSubscriptions();
+  }
+}
+
+function renderSidebarAuth() {
+  const el = document.getElementById('sidebar-auth');
+  if (authState.authenticated) {
+    const u = authState.user;
+    const color = channelColor(u.name);
+    const avatarHtml = u.picture
+      ? `<img class="user-avatar-img" src="${escHtml(u.picture)}" alt="">`
+      : `<div class="user-avatar-fallback" style="background:${color}22;color:${color}">${(u.name||'?').charAt(0).toUpperCase()}</div>`;
+    el.innerHTML = `
+      <div class="user-row" onclick="toggleUserMenu()">
+        ${avatarHtml}
+        <div class="user-info">
+          <div class="user-name">${escHtml(u.name||'')}</div>
+          <div class="user-email">${escHtml(u.email||'')}</div>
+        </div>
+        <div id="user-menu-dropdown" class="user-menu-dropdown">
+          <button class="user-menu-item" onclick="showPersonalFeed(); event.stopPropagation()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            Mon fil
+          </button>
+          <button class="user-menu-item danger" onclick="doLogout(); event.stopPropagation()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Déconnexion
+          </button>
+        </div>
+      </div>`;
+  } else {
+    const btn = authState.google_configured
+      ? `<button class="login-btn" onclick="window.location='/auth/login'">
+           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+             <circle cx="12" cy="7" r="4"/>
+           </svg>
+           Se connecter avec Google
+         </button>`
+      : `<div style="font-size:12px;color:var(--text3);text-align:center;padding:4px 0;line-height:1.5">
+           Configurez GOOGLE_CLIENT_ID dans docker-compose.yml pour activer la connexion.
+         </div>`;
+    el.innerHTML = btn;
+  }
+}
+
+function renderMobileAuthBtn() {
+  const btn = document.getElementById('mobile-auth-btn');
+  if (authState.authenticated && authState.user?.picture) {
+    btn.innerHTML = `<img src="${escHtml(authState.user.picture)}" alt="">`;
+  } else {
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--text2)">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>`;
+  }
+}
+
+function toggleUserMenu() {
+  document.getElementById('user-menu-dropdown')?.classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  const menu = document.getElementById('user-menu-dropdown');
+  if (menu?.classList.contains('open') && !e.target.closest('.user-row')) {
+    menu.classList.remove('open');
+  }
+});
+
+async function doLogout() {
+  await fetch(`${API}/auth/logout`, { method: 'POST' });
+  authState = { authenticated: false, user: null, google_configured: authState.google_configured };
+  renderSidebarAuth();
+  renderMobileAuthBtn();
+  document.getElementById('subs-section').style.display = 'none';
+  document.getElementById('subs-list').innerHTML = '';
+  showToast('Déconnecté');
+  closeAuthSheet();
+}
+
+function toggleMobileAuthSheet() {
+  const backdrop = document.getElementById('auth-sheet-backdrop');
+  if (backdrop.classList.contains('open')) { closeAuthSheet(); return; }
+  const sheet = document.getElementById('auth-sheet');
+  if (authState.authenticated) {
+    const u = authState.user;
+    const color = channelColor(u.name);
+    const avatarHtml = u.picture
+      ? `<img src="${escHtml(u.picture)}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;margin:0 auto 12px;display:block" alt="">`
+      : `<div style="width:52px;height:52px;border-radius:50%;background:${color}22;color:${color};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;margin:0 auto 12px">${(u.name||'?').charAt(0).toUpperCase()}</div>`;
+    sheet.innerHTML = `
+      ${avatarHtml}
+      <h3>${escHtml(u.name||'')}</h3>
+      <p>${escHtml(u.email||'')}</p>
+      <button class="login-btn" onclick="showPersonalFeed();closeAuthSheet()">Mon fil personnalisé</button>
+      <button class="login-btn" style="margin:8px auto 0;color:var(--accent2);border-color:var(--accent)" onclick="doLogout()">Se déconnecter</button>`;
+  } else {
+    sheet.innerHTML = `
+      <h3>Connexion</h3>
+      <p>Connectez votre compte Google pour accéder à votre fil personnalisé et vos abonnements.</p>
+      ${authState.google_configured
+        ? `<button class="login-btn" onclick="window.location='/auth/login'">
+             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+             Se connecter avec Google
+           </button>`
+        : `<p style="font-size:12px;color:var(--text3)">Configurez GOOGLE_CLIENT_ID dans docker-compose.yml pour activer la connexion.</p>`}
+      <button class="auth-sheet-close" onclick="closeAuthSheet()">Fermer</button>`;
+  }
+  backdrop.classList.add('open');
+}
+function closeAuthSheet() {
+  document.getElementById('auth-sheet-backdrop').classList.remove('open');
+}
+
+// ── Abonnements ───────────────────────────────────────────────────────────────
+async function loadSubscriptions() {
+  try {
+    const r = await fetch(`${API}/api/subscriptions`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const subs = data.subscriptions || [];
+    if (!subs.length) return;
+    const section = document.getElementById('subs-section');
+    const list    = document.getElementById('subs-list');
+    section.style.display = 'block';
+    list.innerHTML = subs.slice(0, 20).map(s => `
+      <button class="sub-btn" onclick="openChannel('${escHtml(s.id)}', '${escHtml(s.title)}')">
+        ${s.thumbnail
+          ? `<img class="sub-thumb" src="${escHtml(s.thumbnail)}" alt="">`
+          : `<div class="sub-thumb" style="background:${channelColor(s.title)}22;color:${channelColor(s.title)};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${(s.title||'?').charAt(0).toUpperCase()}</div>`}
+        <span class="sub-name">${escHtml(s.title)}</span>
+      </button>`).join('');
+  } catch {}
+}
+
+async function openChannel(channelId, channelName) {
+  setSNavActive(null);
+  showSkeleton(12);
+  document.getElementById('home-view').classList.remove('hidden');
+  document.getElementById('player-view').classList.remove('active');
+  try {
+    const r = await fetch(`${API}/api/channel/${channelId}`);
+    const data = await r.json();
+    renderCards(data.results || [], channelName || 'Chaîne');
+  } catch {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-icon">📡</div><div class="empty-text">Impossible de charger la chaîne</div></div>`;
+  }
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -582,10 +946,45 @@ function showHome() {
   player.pause(); player.src = '';
   if (sbCheckInterval) clearInterval(sbCheckInterval);
   cancelAutoNext();
-  sbSegments = []; relatedVideos = []; currentVideoId = null;
+  sbSegments = []; relatedVideos = []; currentVideoId = null; currentVideoMeta = {};
   setNavActive('nav-home');
   setSNavActive('snav-home');
+  renderContinueWatching();
+  if (authState.authenticated) {
+    showPersonalFeed();
+  } else {
+    loadTrending();
+  }
 }
+
+async function showPersonalFeed() {
+  setSNavActive('snav-home');
+  showSkeleton(20);
+  try {
+    const r = await fetch(`${API}/api/feed`);
+    if (!r.ok) throw new Error();
+    renderCards((await r.json()).results || [], 'Pour vous');
+  } catch {
+    loadTrending();
+  }
+}
+
+function showHistory() {
+  setNavActive('nav-history');
+  setSNavActive('snav-history');
+  document.getElementById('home-view').classList.remove('hidden');
+  document.getElementById('player-view').classList.remove('active');
+  const hist = getWatchedHistory();
+  if (!hist.length) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-icon">🕐</div><div class="empty-text">Aucun historique de visionnage</div></div>`;
+    return;
+  }
+  renderCards(hist.map(h => ({
+    id: h.id, title: h.title, thumbnail: h.thumbnail,
+    channel: h.channel, duration: h.duration,
+  })), 'Historique');
+}
+
 function focusSearch() {
   const el = document.getElementById('search-mobile') || document.getElementById('search-sidebar');
   el?.focus();
@@ -598,6 +997,27 @@ function setNavActive(id) {
 function setSNavActive(id) {
   document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
   if (id) document.getElementById(id)?.classList.add('active');
+}
+
+// ── Continue watching ─────────────────────────────────────────────────────────
+function renderContinueWatching() {
+  const cont = getContinueWatching();
+  const section = document.getElementById('continue-section');
+  const row     = document.getElementById('continue-row');
+  if (!cont.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  row.innerHTML = cont.map(h => `
+    <div class="continue-card" onclick="openVideo('${h.id}', ${h.currentTime || 0})">
+      <div class="continue-thumb">
+        <img src="${escHtml(h.thumbnail||'')}" alt="" loading="lazy"
+             onerror="this.src='https://i.ytimg.com/vi/${h.id}/hqdefault.jpg'">
+        <div class="continue-progress-bar" style="width:${Math.round((h.pct||0)*100)}%"></div>
+      </div>
+      <div class="continue-info">
+        <div class="continue-title">${escHtml(h.title||'')}</div>
+        <div class="continue-meta">${escHtml(h.channel||'')}${h.duration ? ' · ' + fmt(h.duration) : ''}</div>
+      </div>
+    </div>`).join('');
 }
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
@@ -623,22 +1043,21 @@ function renderCards(videos, title) {
   const cards = videos.map(v => `
     <div class="video-card" onclick="openVideo('${v.id}')">
       <div class="thumb-wrap">
-        <img src="${v.thumbnail}" alt="" loading="lazy"
+        <img src="${escHtml(v.thumbnail||'')}" alt="" loading="lazy"
              onerror="this.src='https://i.ytimg.com/vi/${v.id}/hqdefault.jpg'">
         <div class="thumb-gradient"></div>
         ${v.duration ? `<div class="duration-badge">${fmt(v.duration)}</div>` : ''}
-        <div class="sb-badge">SB</div>
       </div>
       <div class="card-info">
         <div class="card-title">${escHtml(v.title)}</div>
         <div class="card-meta">
           <span>${escHtml(v.channel||'')}</span>
-          ${v.views    ? `<span class="sep">·</span><span>${fmtViews(v.views)}</span>` : ''}
-          ${v.published? `<span class="sep">·</span><span>${fmtDate(v.published)}</span>` : ''}
+          ${v.views     ? `<span class="sep">·</span><span>${fmtViews(v.views)}</span>` : ''}
+          ${v.published ? `<span class="sep">·</span><span>${fmtDate(v.published)}</span>` : ''}
         </div>
       </div>
     </div>`).join('');
-  content.innerHTML = `<div class="section-title">${title}</div><div class="video-grid">${cards}</div>`;
+  content.innerHTML = `<div class="section-title">${escHtml(title)}</div><div class="video-grid">${cards}</div>`;
 }
 
 // ── Tendances ─────────────────────────────────────────────────────────────────
@@ -658,7 +1077,6 @@ async function loadTrending() {
 async function doSearch(q = '') {
   q = q.trim();
   if (!q) return;
-  // Afficher home-view si on était sur le player
   document.getElementById('home-view').classList.remove('hidden');
   document.getElementById('player-view').classList.remove('active');
   setNavActive('nav-search');
@@ -666,14 +1084,14 @@ async function doSearch(q = '') {
   showSkeleton(12);
   try {
     const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&limit=30`);
-    renderCards((await r.json()).results || [], `Résultats pour « ${escHtml(q)} »`);
+    renderCards((await r.json()).results || [], `Résultats pour « ${q} »`);
   } catch {
     document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Erreur de connexion</div></div>`;
   }
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
-async function openVideo(videoId) {
+async function openVideo(videoId, resumeAt = 0) {
   cancelAutoNext();
   currentVideoId = videoId;
   document.getElementById('home-view').classList.add('hidden');
@@ -692,7 +1110,15 @@ async function openVideo(videoId) {
     const info   = await infoRes.json();
     const sbData = await sbRes.json();
 
-    // Métadonnées
+    currentVideoMeta = { id: videoId, title: info.title, thumbnail: info.thumbnail,
+                         channel: info.channel, duration: info.duration };
+
+    // Check history for resume point if not passed explicitly
+    if (!resumeAt) {
+      const hist = getHistory().find(h => h.id === videoId);
+      if (hist && hist.currentTime > 10) resumeAt = hist.currentTime;
+    }
+
     const color   = channelColor(info.channel);
     const initial = (info.channel || '?').charAt(0).toUpperCase();
     document.getElementById('video-meta').innerHTML = `
@@ -709,7 +1135,6 @@ async function openVideo(videoId) {
       ${info.description ? `<div class="player-desc">${escHtml(info.description)}</div>` : ''}
     `;
 
-    // Sélecteur de qualité
     const qBar = document.getElementById('quality-bar');
     if (info.formats?.length) {
       qBar.innerHTML = `<span class="q-label">Qualité</span>`;
@@ -726,22 +1151,23 @@ async function openVideo(videoId) {
       });
     }
 
-    loadStream(videoId, info.formats?.[0]?.quality || 720);
+    loadStream(videoId, info.formats?.[0]?.quality || 720, resumeAt);
     document.getElementById('player').addEventListener('ended', startAutoNext, { once: true });
 
     sbSegments = sbData.segments || [];
     renderSponsorBlock(sbSegments);
     startSBMonitor();
     loadRelated(videoId, info.title);
+    startProgressTracking();
 
   } catch {
     document.getElementById('video-meta').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Impossible de charger la vidéo</div></div>`;
   }
 }
 
-function loadStream(videoId, quality) {
+function loadStream(videoId, quality, resumeAt = 0) {
   const player    = document.getElementById('player');
-  const savedTime = player.currentTime;
+  const savedTime = resumeAt || player.currentTime;
   player.src      = `${API}/api/stream/${videoId}?quality=${quality}`;
   if (savedTime > 0) {
     player.addEventListener('loadedmetadata', () => {
@@ -753,6 +1179,18 @@ function loadStream(videoId, quality) {
     player.load();
     player.play().catch(() => {});
   }
+}
+
+// ── Suivi de progression ──────────────────────────────────────────────────────
+let _progressInterval = null;
+function startProgressTracking() {
+  if (_progressInterval) clearInterval(_progressInterval);
+  _progressInterval = setInterval(() => {
+    const p = document.getElementById('player');
+    if (!currentVideoId || !p || !p.duration || p.paused) return;
+    const m = currentVideoMeta;
+    saveProgress(currentVideoId, m.title, m.thumbnail, m.channel, p.duration, p.currentTime);
+  }, 5000);
 }
 
 // ── Raccourcis clavier ────────────────────────────────────────────────────────
@@ -836,7 +1274,7 @@ function startSBMonitor() {
   }, 500);
 }
 
-// ── Recommandations & Lecture suivante ────────────────────────────────────────
+// ── Recommandations & Auto-play ───────────────────────────────────────────────
 async function loadRelated(videoId, title = '') {
   const panel = document.getElementById('related-panel');
   panel.innerHTML = `<div class="loader"><div class="spinner"></div><span>Recommandations…</span></div>`;
@@ -858,7 +1296,7 @@ function renderRelated(videos) {
     ${videos.map(v => `
       <div class="related-card" onclick="openVideo('${v.id}')">
         <div class="related-thumb">
-          <img src="${v.thumbnail}" loading="lazy" alt=""
+          <img src="${escHtml(v.thumbnail||'')}" loading="lazy" alt=""
                onerror="this.src='https://i.ytimg.com/vi/${v.id}/hqdefault.jpg'">
           ${v.duration ? `<div class="duration-badge">${fmt(v.duration)}</div>` : ''}
         </div>
@@ -887,9 +1325,22 @@ function cancelAutoNext() {
   document.getElementById('autonext-overlay')?.classList.add('hidden');
 }
 
+// ── Gestion erreur auth_error dans l'URL ──────────────────────────────────────
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('auth_error')) {
+    const msg = params.get('auth_error');
+    showToast(msg === '1' ? 'Connexion annulée' : `Erreur auth : ${msg}`, 4000);
+    window.history.replaceState({}, '', '/');
+  }
+})();
+
 // ── Init ──────────────────────────────────────────────────────────────────────
-showSkeleton(20);
-loadTrending();
+renderContinueWatching();
+initAuth().then(() => {
+  if (!authState.authenticated) loadTrending();
+  // showHome() gère déjà le chargement du feed si connecté
+});
 </script>
 </body>
 </html>
