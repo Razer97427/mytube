@@ -63,12 +63,12 @@ def _decrypt(data: bytes) -> str:
 # ── Sessions (RAM + SQLite pour persistance multi-redémarrage) ────────────────
 _sessions: dict[str, dict] = {}
 
-async def _db() -> aiosqlite.Connection:
+def _db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return await aiosqlite.connect(DB_PATH)
+    return aiosqlite.connect(DB_PATH)
 
 async def _init_db() -> None:
-    async with await _db() as db:
+    async with _db() as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -104,7 +104,7 @@ async def _get_session(sid: str | None) -> dict | None:
         _sessions.pop(sid, None)
     # Chemin lent : DB (redémarrage container)
     try:
-        async with await _db() as db:
+        async with _db() as db:
             async with db.execute(
                 "SELECT user_id, expires_at FROM sessions WHERE session_id=?", (sid,)
             ) as cur:
@@ -146,7 +146,7 @@ async def _get_session(sid: str | None) -> dict | None:
         return None
 
 async def _save_session_db(sid: str, user_id: str, expires_at: float) -> None:
-    async with await _db() as db:
+    async with _db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO sessions (session_id, user_id, expires_at) VALUES (?,?,?)",
             (sid, user_id, expires_at)
@@ -154,7 +154,7 @@ async def _save_session_db(sid: str, user_id: str, expires_at: float) -> None:
         await db.commit()
 
 async def _delete_session_db(sid: str) -> None:
-    async with await _db() as db:
+    async with _db() as db:
         await db.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
         await db.commit()
 
@@ -462,13 +462,10 @@ async def _it_browse(browse_id: str, token: str = "", cookies: dict | None = Non
         return []
 
 # ── Auth Google — Device Code Flow ───────────────────────────────────────────
-# Utilise les credentials fournis dans l'env, sinon tente les credentials
-# publics YouTube TV (peuvent être révoqués par Google à tout moment).
-_YTV_ID     = (YOUTUBE_CLIENT_ID
-               or "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com")
-_YTV_SECRET = (YOUTUBE_CLIENT_SECRET or "SboVhoG9s0rNafixCSGGKXAT")
+_YTV_ID     = YOUTUBE_CLIENT_ID or ""
+_YTV_SECRET = YOUTUBE_CLIENT_SECRET or ""
 _YTV_SCOPE  = "https://www.googleapis.com/auth/youtube.readonly"
-_AUTH_CONFIGURED = bool(YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET)
+_AUTH_CONFIGURED = bool(_YTV_ID and _YTV_SECRET)
 
 _G_DEVICE = "https://oauth2.googleapis.com/device/code"
 _G_TOKEN  = "https://oauth2.googleapis.com/token"
@@ -488,6 +485,8 @@ async def startup():
 @app.get("/auth/device/start")
 async def auth_device_start():
     """Lance le device code flow : retourne le code à saisir sur google.com/device."""
+    if not _AUTH_CONFIGURED:
+        raise HTTPException(503, "not_configured: YOUTUBE_CLIENT_ID et YOUTUBE_CLIENT_SECRET manquants dans le fichier .env")
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(_G_DEVICE, data={"client_id": _YTV_ID, "scope": _YTV_SCOPE})
@@ -569,7 +568,7 @@ async def auth_device_poll(poll_id: str, response: Response):
 
         # Sauvegarder en DB pour persistance
         try:
-            async with await _db() as db:
+            async with _db() as db:
                 await db.execute(
                     "INSERT OR REPLACE INTO users (id, name, avatar, auth_method, created_at) "
                     "VALUES (?,?,?,?,?)",
@@ -592,7 +591,7 @@ async def auth_status(session_id: str = Cookie(default=None)):
     s = await _get_session(session_id)
     users_count = 0
     try:
-        async with await _db() as db:
+        async with _db() as db:
             async with db.execute("SELECT COUNT(*) FROM users") as cur:
                 row = await cur.fetchone()
                 users_count = row[0] if row else 0
@@ -701,7 +700,7 @@ async def import_cookies(request: Request, response: Response):
     # Sauvegarder en DB
     expires_at = time.time() + 86400 * 365  # cookies valides 1 an
     cookies_file = await _write_cookies_file(user_id, cookies_txt)
-    async with await _db() as db:
+    async with _db() as db:
         await db.execute(
             "INSERT OR REPLACE INTO users (id, name, avatar, auth_method, created_at) "
             "VALUES (?,?,?,?,?)",
@@ -734,7 +733,7 @@ async def import_cookies(request: Request, response: Response):
 async def list_users():
     """Liste tous les comptes sauvegardés (pour le sélecteur multi-compte)."""
     try:
-        async with await _db() as db:
+        async with _db() as db:
             async with db.execute(
                 "SELECT id, name, avatar, auth_method, created_at FROM users ORDER BY created_at DESC"
             ) as cur:
@@ -751,7 +750,7 @@ async def list_users():
 async def switch_user(user_id: str, response: Response):
     """Bascule sur un compte déjà sauvegardé."""
     try:
-        async with await _db() as db:
+        async with _db() as db:
             async with db.execute(
                 "SELECT name, avatar FROM users WHERE id=?", (user_id,)
             ) as cur:
@@ -798,7 +797,7 @@ async def switch_user(user_id: str, response: Response):
 async def delete_user(user_id: str, response: Response,
                       session_id: str = Cookie(default=None)):
     """Supprime un compte et ses cookies."""
-    async with await _db() as db:
+    async with _db() as db:
         await db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         await db.execute("DELETE FROM user_cookies WHERE user_id=?", (user_id,))
         await db.execute("DELETE FROM users WHERE id=?", (user_id,))
