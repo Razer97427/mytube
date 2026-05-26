@@ -1136,6 +1136,7 @@ function showHome() {
   player.pause(); player.src = '';
   if (sbCheckInterval) clearInterval(sbCheckInterval);
   cancelAutoNext();
+  stopAllTracking();
   sbSegments=[]; relatedVideos=[]; currentVideoId=null; currentVideoMeta={};
   document.title = 'MyTube';
   setNavActive('nav-home'); setSNavActive('snav-home');
@@ -1344,8 +1345,10 @@ function loadStream(videoId, quality, resumeAt=0) {
   }
 }
 
-// ── Progress tracking ─────────────────────────────────────────────────────────
-let _progressInterval = null;
+// ── Progress tracking + sync historique YouTube ───────────────────────────────
+let _progressInterval   = null;
+let _ytStatsInterval    = null;
+
 function startProgressTracking() {
   if (_progressInterval) clearInterval(_progressInterval);
   _progressInterval = setInterval(()=>{
@@ -1354,6 +1357,24 @@ function startProgressTracking() {
     const m = currentVideoMeta;
     saveProgress(currentVideoId, m.title, m.thumbnail, m.channel, p.duration, p.currentTime);
   }, 5000);
+
+  // AXE 1 : reporter la progression à YouTube toutes les 15 s (si connecté)
+  // → alimente l'historique YouTube + affine l'algorithme de recommandations
+  if (_ytStatsInterval) clearInterval(_ytStatsInterval);
+  _ytStatsInterval = setInterval(()=>{
+    if (!authState.authenticated || !currentVideoId) return;
+    const p = document.getElementById('player');
+    if (!p || p.paused || p.ended || !p.duration) return;
+    fetch(`${API}/api/watch/stats?video_id=${encodeURIComponent(currentVideoId)}`
+        + `&position=${Math.round(p.currentTime)}&duration=${Math.round(p.duration)}`,
+      { method: 'POST' }
+    ).catch(()=>{});
+  }, 15000);
+}
+
+function stopAllTracking() {
+  if (_progressInterval) { clearInterval(_progressInterval); _progressInterval = null; }
+  if (_ytStatsInterval)  { clearInterval(_ytStatsInterval);  _ytStatsInterval  = null; }
 }
 
 // ── Picture-in-Picture ────────────────────────────────────────────────────────

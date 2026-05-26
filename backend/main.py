@@ -8,11 +8,15 @@ Streaming : proxy byte-range transparent.
   avant d'être envoyée, elle transite en temps réel.
 """
 
+import asyncio
 import os
+import random
+import string
 import time
 import uuid
 import secrets
 import httpx
+from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Query, Request, Response, Cookie
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +66,53 @@ def _cache_get(video_id: str, quality: int) -> str | None:
 
 def _cache_set(video_id: str, quality: int, url: str) -> None:
     _stream_cache[f"{video_id}_{quality}"] = (url, time.time() + 3600)
+
+def _cache_del(video_id: str, quality: int) -> None:
+    _stream_cache.pop(f"{video_id}_{quality}", None)
+
+# ── AXE 3 : Cache pot token (TTL 1h, lock async) ─────────────────────────────
+# Évite une requête pot-provider (~400ms) à chaque lecture.
+# Le lock empêche plusieurs requêtes simultanées de refetch en parallèle.
+_pot_lock  = asyncio.Lock()
+_pot_store: dict = {"token": {}, "expires_at": 0.0}
+
+async def get_pot(video_id: str = "dQw4w9WgXcQ") -> dict:
+    if time.time() < _pot_store["expires_at"] and _pot_store["token"]:
+        return _pot_store["token"]
+    async with _pot_lock:
+        if time.time() < _pot_store["expires_at"] and _pot_store["token"]:
+            return _pot_store["token"]
+        tok = await fetch_pot_token(video_id)
+        if tok.get("po_token"):
+            _pot_store["token"]     = tok
+            _pot_store["expires_at"] = time.time() + 3600
+        return tok
+
+def _pot_invalidate() -> None:
+    _pot_store["expires_at"] = 0.0
+
+# ── AXE 2 : Hot-cache premiers chunks (LRU, 50 entrées, 512 KB chacune) ──────
+# Objectif : démarrage instantané (zero-lag) — les premiers octets de la vidéo
+# sont déjà en RAM à la 2e lecture ou lorsque plusieurs clients regardent la
+# même vidéo.
+_HOT_BYTES = 512 * 1024  # 512 KB
+
+class _LRU:
+    def __init__(self, n: int = 50):
+        self._c: OrderedDict = OrderedDict()
+        self._n = n
+    def get(self, k: str) -> bytes | None:
+        if k in self._c:
+            self._c.move_to_end(k)
+            return self._c[k]
+        return None
+    def put(self, k: str, v: bytes) -> None:
+        self._c[k] = v
+        self._c.move_to_end(k)
+        if len(self._c) > self._n:
+            self._c.popitem(last=False)
+
+_hot = _LRU(50)
 
 # ── Helpers yt-dlp ────────────────────────────────────────────────────────────
 def get_ydl_opts(extra: dict = {}) -> dict:
@@ -117,31 +168,50 @@ def _fmt_entry(e: dict) -> dict:
         "published": e.get("upload_date", ""),
     }
 
-# ── InnerTube ─────────────────────────────────────────────────────────────────
-_IT_BASE = "https://www.youtube.com/youtubei/v1"
-_IT_VER  = "2.20250526.01.00"
-_IT_CTX  = {"client": {
-    "clientName": "WEB",
-    "clientVersion": _IT_VER,
-    "hl": "fr",
-    "gl": "FR",
-    "platform": "DESKTOP",
+# ── AXE 1 : InnerTube ────────────────────────────────────────────────────────
+# Deux clients :
+#   WEB      — requêtes anonymes (trending, recherche, related sans compte)
+#   TVHTML5  — requêtes authentifiées (feed perso, related avec compte)
+#              correspond exactement au device code flow utilisé pour l'auth.
+_IT_BASE    = "https://www.youtube.com/youtubei/v1"
+_IT_VER_WEB = "2.20250526.01.00"
+_IT_VER_TV  = "7.20250526.00.00"
+
+_IT_CTX_WEB = {"client": {
+    "clientName": "WEB", "clientVersion": _IT_VER_WEB,
+    "hl": "fr", "gl": "FR", "platform": "DESKTOP",
+}}
+_IT_CTX_TV  = {"client": {
+    "clientName": "TVHTML5", "clientVersion": _IT_VER_TV,
+    "hl": "fr", "gl": "FR", "platform": "TV",
 }}
 
+def _it_ctx(token: str = "") -> dict:
+    return _IT_CTX_TV if token else _IT_CTX_WEB
+
 def _it_headers(token: str = "") -> dict:
-    h = {
+    if token:
+        return {
+            "Content-Type": "application/json",
+            "User-Agent": ("Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.0) "
+                           "AppleWebKit/538.1 (KHTML, like Gecko) "
+                           "Version/6.0 TV Safari/538.1"),
+            "X-YouTube-Client-Name": "7",
+            "X-YouTube-Client-Version": _IT_VER_TV,
+            "Authorization": f"Bearer {token}",
+            "Origin": "https://www.youtube.com",
+            "Referer": "https://www.youtube.com/",
+        }
+    return {
         "Content-Type": "application/json",
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/126.0.0.0 Safari/537.36"),
         "X-YouTube-Client-Name": "1",
-        "X-YouTube-Client-Version": _IT_VER,
+        "X-YouTube-Client-Version": _IT_VER_WEB,
         "Origin": "https://www.youtube.com",
         "Referer": "https://www.youtube.com/",
     }
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
 
 def _parse_renderer(r: dict) -> dict | None:
     vid = r.get("videoId")
@@ -190,7 +260,7 @@ async def _it_next(video_id: str, token: str = "") -> list[dict]:
     try:
         async with _yt_client(timeout=10) as c:
             r = await c.post(f"{_IT_BASE}/next",
-                             json={"videoId": video_id, "context": _IT_CTX},
+                             json={"videoId": video_id, "context": _it_ctx(token)},
                              headers=_it_headers(token))
         data = r.json()
         secondary = (data
@@ -213,7 +283,7 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
     try:
         async with _yt_client(timeout=12) as c:
             r = await c.post(f"{_IT_BASE}/browse",
-                             json={"browseId": browse_id, "context": _IT_CTX},
+                             json={"browseId": browse_id, "context": _it_ctx(token)},
                              headers=_it_headers(token))
         data = r.json()
         # Essai structure connue d'abord (plus rapide)
@@ -406,50 +476,152 @@ async def get_video_info(video_id: str):
 @app.get("/api/stream/{video_id}")
 async def stream_video(video_id: str, quality: int = 720, request: Request = None):
     """
-    Proxy byte-range transparent : pas de téléchargement préalable.
-    Le navigateur reçoit les données au fur et à mesure (streaming réel).
-    Seek = nouvelle requête Range → YouTube CDN répond avec 206 Partial Content.
+    AXE 2+3 : Proxy byte-range avec hot-cache, retry 403 et gestion backpressure.
+    - Hot-cache : premiers 512 KB en RAM → démarrage instantané à la 2e lecture.
+    - Retry 403  : si le CDN refuse (token expiré), on invalide et on réextrait.
+    - Backpressure : on détecte la déconnexion client pour libérer la connexion CDN.
     """
-    try:
-        stream_url = _cache_get(video_id, quality)
-        if not stream_url:
-            pot  = await fetch_pot_token(video_id)
-            opts = {**get_ydl_opts({"format": _ios_format(quality)}), **_pot_args(pot)}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                stream_url = info.get("url")
-                if not stream_url and info.get("requested_formats"):
-                    stream_url = info["requested_formats"][0]["url"]
-            _cache_set(video_id, quality, stream_url)
+    rng       = request.headers.get("Range") if request else None
+    is_start  = not rng or rng.startswith("bytes=0-")
+    cache_key = f"{video_id}_{quality}"
 
-        up_headers = {}
-        rng = request.headers.get("Range") if request else None
-        if rng:
-            up_headers["Range"] = rng
-
-        client = _yt_client(timeout=None)
-        up_resp = await client.send(
-            httpx.Request("GET", stream_url, headers=up_headers),
-            stream=True, follow_redirects=True
+    async def _extract_url() -> str:
+        pot = await get_pot(video_id)
+        opts = {**get_ydl_opts({"format": _ios_format(quality)}), **_pot_args(pot)}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(
+                f"https://www.youtube.com/watch?v={video_id}", download=False
+            )
+        url = info.get("url") or (
+            info["requested_formats"][0]["url"] if info.get("requested_formats") else None
         )
-        ctype = up_resp.headers.get("content-type", "video/mp4")
-        resp_h = {"Accept-Ranges": "bytes"}
-        for h in ("content-length", "content-range"):
-            if h in up_resp.headers:
-                resp_h[h.title()] = up_resp.headers[h]
+        if not url:
+            raise HTTPException(502, "URL de flux introuvable")
+        return url
 
-        async def gen():
-            try:
-                async for chunk in up_resp.aiter_bytes(65536):
-                    yield chunk
-            finally:
+    # ── Résolution de l'URL (depuis cache ou extraction) ──────────────────────
+    for attempt in range(2):
+        try:
+            stream_url = _cache_get(video_id, quality)
+            if not stream_url:
+                stream_url = await _extract_url()
+                _cache_set(video_id, quality, stream_url)
+
+            up_headers: dict = {}
+            if rng:
+                up_headers["Range"] = rng
+
+            # ── Cas 1 : début de lecture — servir le hot-cache si disponible ──
+            cached_head = _hot.get(cache_key) if is_start else None
+            if cached_head and not rng:
+                # On renvoie les octets déjà en cache + on continue en streaming
+                async def gen_hot():
+                    yield cached_head
+                    # Continuer depuis là où le cache s'arrête
+                    cont_headers = {"Range": f"bytes={len(cached_head)}-"}
+                    client2 = _yt_client(timeout=None)
+                    try:
+                        resp2 = await client2.send(
+                            httpx.Request("GET", stream_url, headers=cont_headers),
+                            stream=True, follow_redirects=True,
+                        )
+                        async for chunk in resp2.aiter_bytes(65536):
+                            if request and await request.is_disconnected():
+                                break
+                            yield chunk
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    finally:
+                        await client2.aclose()
+                return StreamingResponse(gen_hot(), media_type="video/mp4",
+                                         headers={"Accept-Ranges": "bytes"})
+
+            # ── Cas 2 : requête normale ───────────────────────────────────────
+            client = _yt_client(timeout=None)
+            up_resp = await client.send(
+                httpx.Request("GET", stream_url, headers=up_headers),
+                stream=True, follow_redirects=True,
+            )
+
+            if up_resp.status_code == 403:
                 await up_resp.aclose()
                 await client.aclose()
+                # Token ou URL expirée → invalider et réessayer
+                _pot_invalidate()
+                _cache_del(video_id, quality)
+                if attempt == 0:
+                    continue
+                raise HTTPException(503, "CDN YouTube a refusé la requête (réessayez)")
 
-        return StreamingResponse(gen(), status_code=up_resp.status_code,
-                                 headers=resp_h, media_type=ctype)
-    except Exception as e:
-        raise HTTPException(500, str(e))
+            resp_h: dict = {"Accept-Ranges": "bytes"}
+            for h in ("content-length", "content-range"):
+                if h in up_resp.headers:
+                    resp_h[h.title()] = up_resp.headers[h]
+            ctype = up_resp.headers.get("content-type", "video/mp4")
+
+            async def gen():
+                buf = bytearray() if is_start else None
+                try:
+                    async for chunk in up_resp.aiter_bytes(65536):
+                        # AXE 2 : arrêt propre si le client se déconnecte
+                        if request and await request.is_disconnected():
+                            break
+                        # Accumulation hot-cache uniquement pour le début
+                        if buf is not None and len(buf) < _HOT_BYTES:
+                            buf.extend(chunk)
+                            if len(buf) >= _HOT_BYTES:
+                                _hot.put(cache_key, bytes(buf[:_HOT_BYTES]))
+                        yield chunk
+                except (asyncio.CancelledError, ConnectionResetError):
+                    pass
+                finally:
+                    await up_resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(gen(), status_code=up_resp.status_code,
+                                     headers=resp_h, media_type=ctype)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, str(e))
+
+@app.post("/api/watch/stats")
+async def report_watch_stats(
+    video_id: str  = Query(...),
+    position: float = Query(0),
+    duration: float = Query(0),
+    session_id: str = Cookie(default=None),
+):
+    """
+    AXE 1 : Synchronise la progression de lecture vers YouTube.
+    YouTube utilise ces rapports pour mettre à jour l'historique et
+    alimenter l'algorithme de recommandations.
+    Appelé par le frontend toutes les 15 s pendant la lecture.
+    """
+    s = _get_session(session_id)
+    if not s:
+        return {"ok": False}
+    try:
+        cpn = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+        params = {
+            "ns": "yt", "el": "detailpage", "cpn": cpn, "ver": "2",
+            "cmt": f"{position:.3f}", "fs": "0", "rt": "1",
+            "of": cpn[:8], "euri": "", "lact": "1",
+            "len": f"{duration:.3f}", "docid": video_id,
+            "cbr": "Chrome", "cbrver": "126.0.0.0",
+            "c": "TVHTML5", "cver": _IT_VER_TV,
+            "cos": "Linux", "cosver": "3.0",
+            "cplatform": "TV", "hl": "fr", "cr": "FR",
+        }
+        async with _yt_client(timeout=5) as c:
+            await c.get(
+                "https://www.youtube.com/api/stats/watchtime",
+                params=params,
+                headers={"Authorization": f"Bearer {s['access_token']}"},
+            )
+    except Exception:
+        pass
+    return {"ok": True}
 
 @app.get("/api/sponsorblock/{video_id}")
 async def get_sponsorblock(video_id: str):
