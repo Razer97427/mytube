@@ -32,6 +32,9 @@ app.add_middleware(
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 SPONSORBLOCK_API = os.getenv("SPONSORBLOCK_API", "https://sponsor.ajay.app")
 SESSION_SECRET   = os.getenv("SESSION_SECRET", secrets.token_hex(32))
+# Proxy VPN optionnel — ex: "http://vpn:8888" (gluetun HTTP proxy)
+# Laisser vide pour ne pas utiliser de VPN.
+PROXY_URL        = os.getenv("PROXY_URL", "").strip() or None
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}
@@ -59,8 +62,17 @@ def _cache_set(video_id: str, quality: int, url: str) -> None:
 
 # ── Helpers yt-dlp ────────────────────────────────────────────────────────────
 def get_ydl_opts(extra: dict = {}) -> dict:
-    return {"quiet": True, "no_warnings": True, "extract_flat": False,
-            "nocheckcertificate": True, **extra}
+    opts: dict = {"quiet": True, "no_warnings": True, "extract_flat": False,
+                  "nocheckcertificate": True}
+    if PROXY_URL:
+        opts["proxy"] = PROXY_URL
+    return {**opts, **extra}
+
+def _yt_client(**kw) -> httpx.AsyncClient:
+    """Client httpx pour les requêtes YouTube — passe par le proxy VPN si configuré."""
+    if PROXY_URL:
+        kw["proxy"] = PROXY_URL
+    return httpx.AsyncClient(**kw)
 
 async def fetch_pot_token(video_id: str = "dQw4w9WgXcQ") -> dict:
     try:
@@ -143,7 +155,7 @@ def _parse_renderer(r: dict) -> dict | None:
 async def _it_next(video_id: str, token: str = "") -> list[dict]:
     """Recommandations InnerTube — identiques à la sidebar 'À suivre' de YouTube."""
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with _yt_client(timeout=10) as c:
             r = await c.post(f"{_IT_BASE}/next", params={"key": _IT_KEY},
                              json={"videoId": video_id, "context": _IT_CTX},
                              headers=_it_headers(token))
@@ -169,7 +181,7 @@ async def _it_next(video_id: str, token: str = "") -> list[dict]:
 async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
     """Browse InnerTube : trending (FEtrending), accueil perso (FEwhat_to_watch)…"""
     try:
-        async with httpx.AsyncClient(timeout=12) as c:
+        async with _yt_client(timeout=12) as c:
             r = await c.post(f"{_IT_BASE}/browse", params={"key": _IT_KEY},
                              json={"browseId": browse_id, "context": _IT_CTX},
                              headers=_it_headers(token))
@@ -391,7 +403,7 @@ async def stream_video(video_id: str, quality: int = 720, request: Request = Non
         if rng:
             up_headers["Range"] = rng
 
-        client = httpx.AsyncClient(timeout=None)
+        client = _yt_client(timeout=None)
         up_resp = await client.send(
             httpx.Request("GET", stream_url, headers=up_headers),
             stream=True, follow_redirects=True
@@ -508,7 +520,7 @@ async def get_subscriptions(session_id: str = Cookie(default=None)):
     if not s:
         raise HTTPException(401, "Connexion Google requise")
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with _yt_client(timeout=10) as c:
             r = await c.get(f"{_YT_API}/subscriptions", params={
                 "part": "snippet", "mine": "true",
                 "maxResults": "50", "order": "alphabetical",

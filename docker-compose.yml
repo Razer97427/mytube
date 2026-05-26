@@ -2,6 +2,50 @@ version: "3.9"
 
 services:
 
+  # ── VPN (optionnel) ───────────────────────────────────────────────────────────
+  # Démarrer avec VPN : docker compose --profile vpn up -d --build
+  # Sans VPN         : docker compose up -d --build
+  #
+  # Configuration dans .env :
+  #
+  #   Mode NordVPN (ou autre fournisseur gluetun) :
+  #     VPN_PROVIDER=nordvpn
+  #     VPN_USER=<identifiant service NordVPN>   ← Dashboard NordVPN → Manual Setup
+  #     VPN_PASS=<mot de passe service NordVPN>
+  #     VPN_COUNTRY=France
+  #     PROXY_URL=http://vpn:8888
+  #
+  #   Mode fichier .ovpn custom :
+  #     VPN_PROVIDER=custom
+  #     OVPN_FILE=./vpn/client.ovpn
+  #     VPN_USER=<identifiant vpn>    (optionnel, si le .ovpn requiert auth)
+  #     VPN_PASS=<mot de passe vpn>   (optionnel)
+  #     PROXY_URL=http://vpn:8888
+  #
+  vpn:
+    image: qmcgaw/gluetun:latest
+    profiles: [vpn]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_PROVIDER:-nordvpn}
+      - VPN_TYPE=openvpn
+      # Fournisseur prédéfini (nordvpn, expressvpn, surfshark…)
+      - OPENVPN_USER=${VPN_USER:-}
+      - OPENVPN_PASSWORD=${VPN_PASS:-}
+      - SERVER_COUNTRIES=${VPN_COUNTRY:-France}
+      # Fichier .ovpn custom (actif si VPN_PROVIDER=custom)
+      - OPENVPN_CUSTOM_CONFIG=/gluetun/custom.ovpn
+      # Proxy HTTP interne — utilisé par le backend
+      - HTTPPROXY=on
+      - HTTPPROXY_LISTENING_ADDRESS=:8888
+      - HTTPPROXY_LOG=off
+    volumes:
+      - ${OVPN_FILE:-/dev/null}:/gluetun/custom.ovpn:ro
+    restart: unless-stopped
+
   pot-provider:
     image: brainicism/bgutil-ytdlp-pot-provider:latest
     restart: unless-stopped
@@ -19,6 +63,8 @@ services:
       - POT_PROVIDER_URL=http://pot-provider:4416
       - SPONSORBLOCK_API=https://sponsor.ajay.app
       - SESSION_SECRET=${SESSION_SECRET:-changeme_in_production}
+      # Laisser vide sans VPN. Mettre http://vpn:8888 avec VPN.
+      - PROXY_URL=${PROXY_URL:-}
     depends_on:
       - pot-provider
     volumes:
