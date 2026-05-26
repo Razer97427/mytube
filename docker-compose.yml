@@ -1,27 +1,57 @@
 version: "3.9"
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MyTube — Docker Compose
+#
+# UTILISATION RAPIDE
+#   Sans VPN  : docker compose up -d --build     (ou start.bat / start.sh)
+#   Avec VPN  : PROXY_URL=http://vpn:8888 dans .env, puis start.bat / start.sh
+#
+# PORTAINER
+#   Déployer comme stack (coller ce fichier ou pointer le dépôt Git).
+#   Toutes les variables ${...} sont surchargeables depuis
+#   Stacks → [stack] → Editor → Environment variables.
+#   Les chemins de volumes acceptent des chemins absolus (NFS, CIFS, local) :
+#     CACHE_PATH=/mnt/monpartage/mytube/cache
+#     POT_DATA_PATH=/mnt/monpartage/mytube/pot-data
+#   Si laissés vides, Docker crée des volumes nommés gérés automatiquement.
+#
+# VARIABLES DISPONIBLES (toutes facultatives, valeurs par défaut ci-dessous)
+#
+#   ── Ports exposés ──────────────────────────────────────────────────────────
+#   FRONTEND_PORT   = 3000    Port d'accès à l'interface web
+#   BACKEND_PORT    = 8080    Port de l'API (interne par défaut)
+#   POT_PORT        = 4416    Port du pot-provider (interne par défaut)
+#
+#   ── Volumes / chemins ──────────────────────────────────────────────────────
+#   CACHE_PATH      =         Chemin hôte pour le cache yt-dlp
+#                             (vide = volume Docker nommé "yt_cache")
+#   POT_DATA_PATH   =         Chemin hôte pour les données du pot-provider
+#                             (vide = volume Docker nommé "pot_data")
+#   OVPN_FILE       =         Chemin absolu vers le fichier .ovpn (mode custom)
+#
+#   ── Sécurité ───────────────────────────────────────────────────────────────
+#   SESSION_SECRET  = changeme_in_production   Changer en production !
+#
+#   ── VPN (gluetun) ──────────────────────────────────────────────────────────
+#   PROXY_URL       =         URL du proxy VPN (http://vpn:8888 si VPN actif)
+#   VPN_PROVIDER    = nordvpn Fournisseur : nordvpn, expressvpn, custom…
+#   VPN_USER        =         Identifiant OpenVPN du fournisseur
+#   VPN_PASS        =         Mot de passe OpenVPN du fournisseur
+#   VPN_COUNTRY     = France  Pays du serveur VPN
+#
+#   ── Connexion Google ───────────────────────────────────────────────────────
+#   YOUTUBE_CLIENT_ID     =   OAuth client ID (TV and Limited Input Devices)
+#   YOUTUBE_CLIENT_SECRET =   OAuth client secret
+#
+#   ── Services externes ──────────────────────────────────────────────────────
+#   SPONSORBLOCK_API = https://sponsor.ajay.app
+#   POT_PROVIDER_URL = http://pot-provider:4416  (ne pas modifier sauf réseau custom)
+# ══════════════════════════════════════════════════════════════════════════════
+
 services:
 
-  # ── VPN (optionnel) ───────────────────────────────────────────────────────────
-  # Démarrer avec VPN : docker compose --profile vpn up -d --build
-  # Sans VPN         : docker compose up -d --build
-  #
-  # Configuration dans .env :
-  #
-  #   Mode NordVPN (ou autre fournisseur gluetun) :
-  #     VPN_PROVIDER=nordvpn
-  #     VPN_USER=<identifiant service NordVPN>   ← Dashboard NordVPN → Manual Setup
-  #     VPN_PASS=<mot de passe service NordVPN>
-  #     VPN_COUNTRY=France
-  #     PROXY_URL=http://vpn:8888
-  #
-  #   Mode fichier .ovpn custom :
-  #     VPN_PROVIDER=custom
-  #     OVPN_FILE=./vpn/client.ovpn
-  #     VPN_USER=<identifiant vpn>    (optionnel, si le .ovpn requiert auth)
-  #     VPN_PASS=<mot de passe vpn>   (optionnel)
-  #     PROXY_URL=http://vpn:8888
-  #
+  # ── VPN optionnel (gluetun) ───────────────────────────────────────────────
   vpn:
     image: qmcgaw/gluetun:latest
     profiles: [vpn]
@@ -32,52 +62,74 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=${VPN_PROVIDER:-nordvpn}
       - VPN_TYPE=openvpn
-      # Fournisseur prédéfini (nordvpn, expressvpn, surfshark…)
       - OPENVPN_USER=${VPN_USER:-}
       - OPENVPN_PASSWORD=${VPN_PASS:-}
       - SERVER_COUNTRIES=${VPN_COUNTRY:-France}
-      # Fichier .ovpn custom (actif si VPN_PROVIDER=custom)
       - OPENVPN_CUSTOM_CONFIG=/gluetun/custom.ovpn
-      # Proxy HTTP interne — utilisé par le backend
       - HTTPPROXY=on
       - HTTPPROXY_LISTENING_ADDRESS=:8888
       - HTTPPROXY_LOG=off
     volumes:
       - ${OVPN_FILE:-/dev/null}:/gluetun/custom.ovpn:ro
     restart: unless-stopped
+    labels:
+      com.mytube.service: vpn
+      com.mytube.description: "Tunnel VPN optionnel (gluetun)"
 
+  # ── pot-provider (anti-bot po_token) ─────────────────────────────────────
   pot-provider:
     image: brainicism/bgutil-ytdlp-pot-provider:latest
     restart: unless-stopped
     ports:
-      - "4416:4416"
+      - "${POT_PORT:-4416}:4416"
     volumes:
-      - pot_data:/app/data
+      # Laisser vide → volume Docker nommé automatique
+      # Renseigner un chemin absolu → bind mount vers NFS / dossier hôte
+      - ${POT_DATA_PATH:-pot_data}:/app/data
+    labels:
+      com.mytube.service: pot-provider
+      com.mytube.description: "Générateur de po_token anti-bot YouTube"
 
+  # ── Backend FastAPI ───────────────────────────────────────────────────────
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8080}:8080"
     environment:
-      - POT_PROVIDER_URL=http://pot-provider:4416
-      - SPONSORBLOCK_API=https://sponsor.ajay.app
+      - POT_PROVIDER_URL=${POT_PROVIDER_URL:-http://pot-provider:4416}
+      - SPONSORBLOCK_API=${SPONSORBLOCK_API:-https://sponsor.ajay.app}
       - SESSION_SECRET=${SESSION_SECRET:-changeme_in_production}
-      # Laisser vide sans VPN. Mettre http://vpn:8888 avec VPN.
       - PROXY_URL=${PROXY_URL:-}
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID:-}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET:-}
     depends_on:
       - pot-provider
     volumes:
-      - yt_cache:/app/cache
+      # Laisser vide → volume Docker nommé automatique
+      # Exemple NFS : CACHE_PATH=/mnt/monpartage/mytube/cache
+      - ${CACHE_PATH:-yt_cache}:/app/cache
+    labels:
+      com.mytube.service: backend
+      com.mytube.description: "API FastAPI + yt-dlp + streaming proxy"
 
+  # ── Frontend Nginx ────────────────────────────────────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       - backend
+    labels:
+      com.mytube.service: frontend
+      com.mytube.description: "Interface web PWA (Nginx)"
 
+# ── Volumes nommés (utilisés uniquement si les variables de chemin sont vides) ─
 volumes:
   pot_data:
   yt_cache:
