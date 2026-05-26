@@ -909,7 +909,7 @@ let _pollInterval = null, _pollId = null, _pollIntervalS = 5;
 
 async function initAuth() {
   try { authState = await (await fetch(`${API}/auth/status`)).json(); }
-  catch { authState = { authenticated: false, user: null, auth_configured: false }; }
+  catch { authState = { authenticated: false, user: null, auth_configured: false, users_count: 0 }; }
   renderHeaderAuth();
   if (authState.authenticated) loadSubscriptions();
 }
@@ -932,6 +932,10 @@ function renderHeaderAuth() {
         <button class="user-menu-item" onclick="showPersonalFeed();closeHeaderUserMenu()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           Mon fil
+        </button>
+        <button class="user-menu-item" onclick="showAccountSwitcher()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7"/><path d="M17 21v-2a3 3 0 0 0-3-3h-1"/><path d="M19 15l2 2 2-2"/></svg>
+          Changer de compte
         </button>
         <button class="user-menu-item danger" onclick="doLogout()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -994,6 +998,29 @@ async function startDeviceLogin() {
   closeHeaderUserMenu();
   const modal = document.getElementById('auth-modal');
   document.getElementById('auth-modal-backdrop').classList.add('open');
+  modal.innerHTML = `
+    <h3>Connexion Google</h3>
+    <p class="subtitle">Choisissez votre méthode de connexion</p>
+    <button class="auth-btn-primary" onclick="closeAuthModal();startCookieImport()" style="margin:0 auto 12px">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Importer mes cookies YouTube
+    </button>
+    <p style="font-size:11px;color:var(--text3);margin:4px 0 16px;text-align:center">
+      ★ Recommandé — Recommandations et historique 100% réels
+    </p>
+    <button class="auth-btn-primary" onclick="_startDeviceCodeFlow()"
+      style="margin:0 auto 12px;border-color:var(--surface3);color:var(--text2);background:transparent">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Device Code Flow (OAuth)
+    </button>
+    <p style="font-size:11px;color:var(--text3);margin:4px 0 16px;text-align:center">
+      Accès limité si credentials publics révoqués
+    </p>
+    <button class="auth-modal-close" onclick="closeAuthModal()">Annuler</button>`;
+}
+
+async function _startDeviceCodeFlow() {
+  const modal = document.getElementById('auth-modal');
   modal.innerHTML = `<div class="loader" style="padding:32px 0"><div class="spinner"></div><span>Connexion à Google…</span></div>`;
   let data;
   try {
@@ -1067,6 +1094,131 @@ async function pollDeviceCode() {
     console.error('Poll error:', e);
   }
 }
+// ── Import cookies (méthode ProTube) ─────────────────────────────────────────
+async function startCookieImport() {
+  closeHeaderUserMenu(); closeAuthSheet();
+  const modal = document.getElementById('auth-modal');
+  document.getElementById('auth-modal-backdrop').classList.add('open');
+  modal.innerHTML = `
+    <h3>Connexion via cookies</h3>
+    <p class="subtitle" style="text-align:left;line-height:1.6">
+      Méthode <strong>ProTube</strong> : utilise votre vraie session YouTube.<br>
+      Recommandations, historique et feed <strong>100% identiques à YouTube</strong>.
+    </p>
+    <ol style="text-align:left;font-size:13px;color:var(--text2);line-height:2.2;padding-left:18px;margin-bottom:16px">
+      <li>Installer l'extension <a href="https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" rel="noopener" style="color:#3ea6ff">Get cookies.txt LOCALLY</a> (Chrome) ou <a href="https://addons.mozilla.org/firefox/addon/cookies-txt/" target="_blank" rel="noopener" style="color:#3ea6ff">cookies.txt</a> (Firefox)</li>
+      <li>Aller sur <strong>youtube.com</strong> en étant connecté</li>
+      <li>Cliquer sur l'extension → <strong>Exporter</strong> les cookies de youtube.com</li>
+      <li>Copier-coller le contenu ci-dessous :</li>
+    </ol>
+    <textarea id="cookies-input" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE 1700000000 SID xxxxx&#10;..."
+      style="width:100%;height:110px;background:#1a1a1a;border:1px solid var(--surface3);border-radius:8px;
+             color:var(--text);font-family:monospace;font-size:11px;padding:10px;resize:vertical;
+             box-sizing:border-box;margin-bottom:16px"></textarea>
+    <button class="auth-btn-primary" onclick="submitCookieImport()" style="margin:0 auto 8px">
+      Importer et se connecter
+    </button>
+    <button class="auth-modal-close" onclick="closeAuthModal()">Annuler</button>`;
+}
+
+async function submitCookieImport() {
+  const txt = document.getElementById('cookies-input')?.value?.trim();
+  if (!txt) { showToast('Collez vos cookies dans la zone de texte'); return; }
+  const modal = document.getElementById('auth-modal');
+  modal.innerHTML = `<div class="loader" style="padding:32px 0"><div class="spinner"></div><span>Vérification des cookies…</span></div>`;
+  try {
+    const resp = await fetch(`${API}/auth/import-cookies`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cookies_txt: txt}),
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || 'Cookies invalides');
+    authState = { ...authState, authenticated: true, user: d.user, auth_method: 'cookies' };
+    closeAuthModal();
+    renderHeaderAuth();
+    loadSubscriptions();
+    showToast(`Connecté — ${d.user?.name || 'YouTube'}`);
+    showPersonalFeed();
+  } catch(e) {
+    modal.innerHTML = `
+      <h3 style="color:#ff6b6b">Erreur d'import</h3>
+      <p class="subtitle" style="font-family:monospace;font-size:12px;background:#1a1a1a;
+         padding:12px;border-radius:8px;text-align:left">${escHtml(String(e))}</p>
+      <button class="auth-btn-primary" onclick="startCookieImport()" style="margin:0 auto 8px">Réessayer</button>
+      <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+  }
+}
+
+// ── Sélecteur multi-compte ────────────────────────────────────────────────────
+async function showAccountSwitcher() {
+  closeHeaderUserMenu();
+  const modal = document.getElementById('auth-modal');
+  document.getElementById('auth-modal-backdrop').classList.add('open');
+  modal.innerHTML = `<div class="loader" style="padding:24px 0"><div class="spinner"></div></div>`;
+  try {
+    const {users} = await (await fetch(`${API}/auth/users`)).json();
+    const current = authState.user?.id;
+    modal.innerHTML = `
+      <h3>Comptes</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
+        ${users.map(u => `
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;
+               background:${u.id===current?'var(--surface3)':'var(--surface2)'};
+               border-radius:10px;cursor:pointer" onclick="switchAccount('${escHtml(u.id)}')">
+            ${u.avatar
+              ? `<img src="${escHtml(u.avatar)}" style="width:36px;height:36px;border-radius:50%;object-fit:cover">`
+              : `<div style="width:36px;height:36px;border-radius:50%;background:#3ea6ff;display:flex;align-items:center;justify-content:center;font-weight:700;color:#0f0f0f">${(u.name||'?').charAt(0).toUpperCase()}</div>`}
+            <div style="flex:1;text-align:left">
+              <div style="font-size:14px;font-weight:500">${escHtml(u.name)}</div>
+              <div style="font-size:11px;color:var(--text3)">${u.auth_method==='cookies'?'Session YouTube':'OAuth TV'}${u.id===current?' · actif':''}</div>
+            </div>
+            <button onclick="event.stopPropagation();deleteAccount('${escHtml(u.id)}')"
+              style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px;font-size:16px"
+              title="Supprimer">✕</button>
+          </div>`).join('')}
+      </div>
+      <button class="auth-btn-primary" onclick="closeAuthModal();startCookieImport()" style="margin:0 auto 8px">
+        + Ajouter un compte
+      </button>
+      <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+  } catch(e) {
+    modal.innerHTML = `<h3>Erreur</h3><p class="subtitle">${escHtml(String(e))}</p>
+      <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+  }
+}
+
+async function switchAccount(userId) {
+  const modal = document.getElementById('auth-modal');
+  modal.innerHTML = `<div class="loader" style="padding:24px 0"><div class="spinner"></div></div>`;
+  try {
+    const resp = await fetch(`${API}/auth/switch/${encodeURIComponent(userId)}`, {method:'POST'});
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || 'Erreur');
+    authState = { ...authState, authenticated: true, user: d.user, auth_method: 'cookies' };
+    closeAuthModal();
+    renderHeaderAuth();
+    loadSubscriptions();
+    showToast(`Compte : ${d.user?.name || userId}`);
+    showPersonalFeed();
+  } catch(e) {
+    showToast('Erreur : ' + String(e));
+    closeAuthModal();
+  }
+}
+
+async function deleteAccount(userId) {
+  if (!confirm('Supprimer ce compte et ses cookies ?')) return;
+  await fetch(`${API}/auth/users/${encodeURIComponent(userId)}`, {method:'DELETE'});
+  showToast('Compte supprimé');
+  if (authState.user?.id === userId) {
+    authState = { authenticated: false, user: null };
+    renderHeaderAuth();
+    loadTrending();
+  }
+  showAccountSwitcher();
+}
+
 function stopDevicePoll()    { if (_pollInterval) { clearInterval(_pollInterval); _pollInterval=null; } _pollId=null; }
 function cancelDeviceLogin() { stopDevicePoll(); closeAuthModal(); }
 function closeAuthModal()    { document.getElementById('auth-modal-backdrop').classList.remove('open'); }

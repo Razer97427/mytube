@@ -108,9 +108,12 @@ services:
     depends_on:
       - pot-provider
     volumes:
-      # Laisser vide → volume Docker nommé automatique
+      # Cache yt-dlp — laisser vide = volume Docker automatique
       # Exemple NFS : CACHE_PATH=/mnt/monpartage/mytube/cache
       - ${CACHE_PATH:-yt_cache}:/app/cache
+      # Données app : SQLite DB + fichiers cookies chiffrés
+      # Exemple NFS : APP_DATA_PATH=/mnt/monpartage/mytube/data
+      - ${APP_DATA_PATH:-app_data}:/app/data
     labels:
       com.mytube.service: backend
       com.mytube.description: "API FastAPI + yt-dlp + streaming proxy"
@@ -133,3 +136,4 @@ services:
 volumes:
   pot_data:
   yt_cache:
+  app_data:
