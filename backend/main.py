@@ -12,7 +12,6 @@ import os
 import time
 import uuid
 import secrets
-import urllib.parse
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response, Cookie
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -30,12 +29,9 @@ app.add_middleware(
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
-POT_PROVIDER_URL     = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
-SPONSORBLOCK_API     = os.getenv("SPONSORBLOCK_API", "https://sponsor.ajay.app")
-GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-APP_PUBLIC_URL       = os.getenv("APP_PUBLIC_URL", "http://localhost:3000")
-SESSION_SECRET       = os.getenv("SESSION_SECRET", secrets.token_hex(32))
+POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
+SPONSORBLOCK_API = os.getenv("SPONSORBLOCK_API", "https://sponsor.ajay.app")
+SESSION_SECRET   = os.getenv("SESSION_SECRET", secrets.token_hex(32))
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}
@@ -207,64 +203,96 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
     except Exception:
         return []
 
-# ── OAuth2 Google ─────────────────────────────────────────────────────────────
-_G_AUTH  = "https://accounts.google.com/o/oauth2/v2/auth"
-_G_TOKEN = "https://oauth2.googleapis.com/token"
-_G_ME    = "https://www.googleapis.com/oauth2/v2/userinfo"
-_YT_API  = "https://www.googleapis.com/youtube/v3"
-_SCOPES  = " ".join(["openid", "email", "profile",
-                     "https://www.googleapis.com/auth/youtube.readonly"])
+# ── Auth Google — Device Code Flow (comme SmartTube / YouTube TV) ─────────────
+# Credentials publics de l'app "YouTube on TV" — aucune config nécessaire.
+_YTV_ID     = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
+_YTV_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
+_YTV_SCOPE  = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email"
 
-@app.get("/auth/login")
-async def auth_login():
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(400, "GOOGLE_CLIENT_ID non configuré dans docker-compose.yml")
-    p = urllib.parse.urlencode({
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": f"{APP_PUBLIC_URL}/auth/callback",
-        "response_type": "code",
-        "scope": _SCOPES,
-        "access_type": "offline",
-        "prompt": "select_account",
-    })
-    return RedirectResponse(f"{_G_AUTH}?{p}")
+_G_DEVICE = "https://oauth2.googleapis.com/device/code"
+_G_TOKEN  = "https://oauth2.googleapis.com/token"
+_G_ME     = "https://www.googleapis.com/oauth2/v2/userinfo"
+_YT_API   = "https://www.googleapis.com/youtube/v3"
 
-@app.get("/auth/callback")
-async def auth_callback(code: str = "", error: str = ""):
-    if error or not code:
-        return RedirectResponse("/?auth_error=1")
+# poll_id → {device_code, expires_at}
+_pending_devices: dict[str, dict] = {}
+
+@app.get("/auth/device/start")
+async def auth_device_start():
+    """Lance le device code flow : retourne le code à saisir sur google.com/device."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(_G_DEVICE, data={"client_id": _YTV_ID, "scope": _YTV_SCOPE})
+        d = r.json()
+        if "error" in d:
+            raise HTTPException(500, d.get("error_description", d["error"]))
+        poll_id = str(uuid.uuid4())
+        _pending_devices[poll_id] = {
+            "device_code": d["device_code"],
+            "expires_at":  time.time() + d.get("expires_in", 1800),
+        }
+        return {
+            "poll_id":          poll_id,
+            "user_code":        d["user_code"],
+            "verification_url": d.get("verification_url", "https://www.google.com/device"),
+            "expires_in":       d.get("expires_in", 1800),
+            "interval":         d.get("interval", 5),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/auth/device/poll")
+async def auth_device_poll(poll_id: str, response: Response):
+    """Vérifie si l'utilisateur a validé la connexion sur Google."""
+    pending = _pending_devices.get(poll_id)
+    if not pending or time.time() > pending["expires_at"]:
+        _pending_devices.pop(poll_id, None)
+        return {"status": "expired"}
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             t = (await c.post(_G_TOKEN, data={
-                "code": code, "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": f"{APP_PUBLIC_URL}/auth/callback",
-                "grant_type": "authorization_code",
+                "client_id":     _YTV_ID,
+                "client_secret": _YTV_SECRET,
+                "device_code":   pending["device_code"],
+                "grant_type":    "urn:ietf:params:oauth2:grant-type:device_code",
             })).json()
-            u = (await c.get(_G_ME, headers={"Authorization": f"Bearer {t['access_token']}"})).json()
+        err = t.get("error")
+        if err in ("authorization_pending", "slow_down"):
+            return {"status": "pending"}
+        if err:
+            _pending_devices.pop(poll_id, None)
+            return {"status": "error", "message": t.get("error_description", err)}
+
+        access_token = t.get("access_token", "")
+        user = {"id": "", "name": "Utilisateur Google", "email": "", "picture": ""}
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                u = (await c.get(_G_ME, headers={"Authorization": f"Bearer {access_token}"})).json()
+            user = {"id": u.get("id",""), "name": u.get("name",""),
+                    "email": u.get("email",""), "picture": u.get("picture","")}
+        except Exception:
+            pass
+
         sid = str(uuid.uuid4())
         _sessions[sid] = {
-            "user": {"id": u.get("id",""), "name": u.get("name",""),
-                     "email": u.get("email",""), "picture": u.get("picture","")},
-            "access_token":  t.get("access_token",""),
-            "refresh_token": t.get("refresh_token",""),
-            "expires_at": time.time() + 86400 * 30,
+            "user":          user,
+            "access_token":  access_token,
+            "refresh_token": t.get("refresh_token", ""),
+            "expires_at":    time.time() + 86400 * 30,
         }
-        resp = RedirectResponse("/", status_code=302)
-        resp.set_cookie("session_id", sid, httponly=True,
-                        max_age=86400*30, samesite="lax", path="/")
-        return resp
+        _pending_devices.pop(poll_id, None)
+        response.set_cookie("session_id", sid, httponly=True,
+                            max_age=86400*30, samesite="lax", path="/")
+        return {"status": "authorized", "user": user}
     except Exception as e:
-        return RedirectResponse(f"/?auth_error={urllib.parse.quote(str(e))}")
+        raise HTTPException(500, str(e))
 
 @app.get("/auth/status")
 async def auth_status(session_id: str = Cookie(default=None)):
     s = _get_session(session_id)
-    return {
-        "authenticated": bool(s),
-        "user": s["user"] if s else None,
-        "google_configured": bool(GOOGLE_CLIENT_ID),
-    }
+    return {"authenticated": bool(s), "user": s["user"] if s else None}
 
 @app.post("/auth/logout")
 async def auth_logout(response: Response, session_id: str = Cookie(default=None)):

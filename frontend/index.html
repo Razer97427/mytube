@@ -513,6 +513,57 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 @media (min-width: 900px) { .toast { bottom: 28px; } }
 
+/* ══ AUTH MODAL ══════════════════════════════════════════════════════════════ */
+.auth-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200;
+  display: none; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px); padding: 20px;
+}
+.auth-modal-backdrop.open { display: flex; }
+.auth-modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; padding: 32px 28px; width: 100%; max-width: 400px;
+  text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,.6);
+}
+.auth-modal h3 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+.auth-modal .subtitle { font-size: 14px; color: var(--text2); margin-bottom: 28px; line-height: 1.5; }
+.device-code-box {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 18px;
+}
+.device-code-label { font-size: 10px; font-weight: 700; color: var(--text3); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 10px; }
+.device-code {
+  font-family: 'DM Mono', monospace; font-size: 32px; font-weight: 700;
+  color: var(--text); letter-spacing: .12em; margin-bottom: 12px;
+}
+.device-url-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: #fff; border: none; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
+  padding: 10px 22px; border-radius: 50px; text-decoration: none;
+  transition: background .2s;
+}
+.device-url-btn:hover { background: var(--accent2); }
+.auth-step {
+  display: flex; align-items: flex-start; gap: 12px;
+  text-align: left; margin-bottom: 10px;
+}
+.auth-step-num {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;
+}
+.auth-step-text { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.auth-step-text strong { color: var(--text); }
+.auth-waiting {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13px; color: var(--text3); margin-top: 20px;
+}
+.auth-modal-close {
+  background: none; border: none; color: var(--text3); font-family: 'DM Sans', sans-serif;
+  font-size: 13px; cursor: pointer; padding: 8px; margin-top: 12px; display: block; width: 100%;
+}
+
 /* ══ MOBILE AUTH SHEET ═══════════════════════════════════════════════════════ */
 .auth-sheet-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200;
@@ -690,6 +741,13 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
   </button>
 </nav>
 
+<!-- ── Auth modal ── -->
+<div class="auth-modal-backdrop" id="auth-modal-backdrop" onclick="if(event.target===this)closeAuthModal()">
+  <div class="auth-modal" id="auth-modal">
+    <!-- rempli dynamiquement -->
+  </div>
+</div>
+
 <!-- ── Auth sheet mobile ── -->
 <div class="auth-sheet-backdrop" id="auth-sheet-backdrop" onclick="if(event.target===this)closeAuthSheet()">
   <div class="auth-sheet" id="auth-sheet">
@@ -779,19 +837,21 @@ function getWatchedHistory() {
   return getHistory().slice(0, 60);
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Auth — Device Code Flow ───────────────────────────────────────────────────
+let _pollInterval  = null;
+let _pollId        = null;
+let _pollIntervalS = 5;
+
 async function initAuth() {
   try {
     const r = await fetch(`${API}/auth/status`);
     authState = await r.json();
   } catch {
-    authState = { authenticated: false, user: null, google_configured: false };
+    authState = { authenticated: false, user: null };
   }
   renderSidebarAuth();
   renderMobileAuthBtn();
-  if (authState.authenticated) {
-    loadSubscriptions();
-  }
+  if (authState.authenticated) loadSubscriptions();
 }
 
 function renderSidebarAuth() {
@@ -810,29 +870,25 @@ function renderSidebarAuth() {
           <div class="user-email">${escHtml(u.email||'')}</div>
         </div>
         <div id="user-menu-dropdown" class="user-menu-dropdown">
-          <button class="user-menu-item" onclick="showPersonalFeed(); event.stopPropagation()">
+          <button class="user-menu-item" onclick="showPersonalFeed();event.stopPropagation()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
             Mon fil
           </button>
-          <button class="user-menu-item danger" onclick="doLogout(); event.stopPropagation()">
+          <button class="user-menu-item danger" onclick="doLogout();event.stopPropagation()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Déconnexion
           </button>
         </div>
       </div>`;
   } else {
-    const btn = authState.google_configured
-      ? `<button class="login-btn" onclick="window.location='/auth/login'">
-           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-             <circle cx="12" cy="7" r="4"/>
-           </svg>
-           Se connecter avec Google
-         </button>`
-      : `<div style="font-size:12px;color:var(--text3);text-align:center;padding:4px 0;line-height:1.5">
-           Configurez GOOGLE_CLIENT_ID dans docker-compose.yml pour activer la connexion.
-         </div>`;
-    el.innerHTML = btn;
+    el.innerHTML = `
+      <button class="login-btn" onclick="startDeviceLogin()">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        Se connecter avec Google
+      </button>`;
   }
 }
 
@@ -841,10 +897,7 @@ function renderMobileAuthBtn() {
   if (authState.authenticated && authState.user?.picture) {
     btn.innerHTML = `<img src="${escHtml(authState.user.picture)}" alt="">`;
   } else {
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--text2)">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-      <circle cx="12" cy="7" r="4"/>
-    </svg>`;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--text2)"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
   }
 }
 
@@ -860,13 +913,109 @@ document.addEventListener('click', e => {
 
 async function doLogout() {
   await fetch(`${API}/auth/logout`, { method: 'POST' });
-  authState = { authenticated: false, user: null, google_configured: authState.google_configured };
+  authState = { authenticated: false, user: null };
   renderSidebarAuth();
   renderMobileAuthBtn();
   document.getElementById('subs-section').style.display = 'none';
   document.getElementById('subs-list').innerHTML = '';
-  showToast('Déconnecté');
   closeAuthSheet();
+  closeAuthModal();
+  showToast('Déconnecté');
+}
+
+// ── Device code login flow ────────────────────────────────────────────────────
+async function startDeviceLogin() {
+  const modal = document.getElementById('auth-modal');
+  document.getElementById('auth-modal-backdrop').classList.add('open');
+  modal.innerHTML = `<div class="loader" style="padding:32px 0"><div class="spinner"></div><span>Connexion à Google…</span></div>`;
+
+  let data;
+  try {
+    const r = await fetch(`${API}/auth/device/start`);
+    data = await r.json();
+    if (!data.poll_id) throw new Error(data.detail || 'Erreur');
+  } catch (e) {
+    modal.innerHTML = `
+      <h3>Erreur</h3>
+      <p class="subtitle">${escHtml(String(e))}</p>
+      <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+    return;
+  }
+
+  _pollId        = data.poll_id;
+  _pollIntervalS = data.interval || 5;
+
+  modal.innerHTML = `
+    <h3>Connexion Google</h3>
+    <p class="subtitle">Ouvrez le lien ci-dessous et entrez ce code :</p>
+    <div class="device-code-box">
+      <div class="device-code-label">Votre code</div>
+      <div class="device-code" id="device-code-txt">${escHtml(data.user_code)}</div>
+      <a class="device-url-btn" href="${escHtml(data.verification_url)}" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        Ouvrir google.com/device
+      </a>
+    </div>
+    <div class="auth-step">
+      <div class="auth-step-num">1</div>
+      <div class="auth-step-text">Cliquez sur le bouton ci-dessus (ou allez sur <strong>google.com/device</strong>)</div>
+    </div>
+    <div class="auth-step">
+      <div class="auth-step-num">2</div>
+      <div class="auth-step-text">Entrez le code <strong>${escHtml(data.user_code)}</strong> et connectez-vous</div>
+    </div>
+    <div class="auth-step">
+      <div class="auth-step-num">3</div>
+      <div class="auth-step-text">Cette fenêtre se ferme automatiquement</div>
+    </div>
+    <div class="auth-waiting">
+      <div class="spinner" style="width:16px;height:16px;border-width:2px"></div>
+      En attente de validation…
+    </div>
+    <button class="auth-modal-close" onclick="cancelDeviceLogin()">Annuler</button>`;
+
+  stopDevicePoll();
+  _pollInterval = setInterval(pollDeviceCode, _pollIntervalS * 1000);
+}
+
+async function pollDeviceCode() {
+  if (!_pollId) return;
+  try {
+    const r = await fetch(`${API}/auth/device/poll?poll_id=${_pollId}`);
+    const d = await r.json();
+    if (d.status === 'authorized') {
+      stopDevicePoll();
+      authState = { authenticated: true, user: d.user };
+      closeAuthModal();
+      closeAuthSheet();
+      renderSidebarAuth();
+      renderMobileAuthBtn();
+      loadSubscriptions();
+      showToast(`Connecté en tant que ${d.user?.name || 'Google'}`);
+      if (authState.authenticated) showPersonalFeed();
+    } else if (d.status === 'expired' || d.status === 'error') {
+      stopDevicePoll();
+      const modal = document.getElementById('auth-modal');
+      modal.innerHTML = `
+        <h3>${d.status === 'expired' ? 'Code expiré' : 'Erreur'}</h3>
+        <p class="subtitle">${d.status === 'expired' ? 'Le code a expiré. Réessayez.' : escHtml(d.message||'')}</p>
+        <button class="login-btn" onclick="startDeviceLogin()" style="margin:0 auto 12px">Réessayer</button>
+        <button class="auth-modal-close" onclick="closeAuthModal()">Annuler</button>`;
+    }
+    // status === 'pending' → on continue à poller
+  } catch {}
+}
+
+function stopDevicePoll() {
+  if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+  _pollId = null;
+}
+function cancelDeviceLogin() {
+  stopDevicePoll();
+  closeAuthModal();
+}
+function closeAuthModal() {
+  document.getElementById('auth-modal-backdrop').classList.remove('open');
 }
 
 function toggleMobileAuthSheet() {
@@ -889,12 +1038,10 @@ function toggleMobileAuthSheet() {
     sheet.innerHTML = `
       <h3>Connexion</h3>
       <p>Connectez votre compte Google pour accéder à votre fil personnalisé et vos abonnements.</p>
-      ${authState.google_configured
-        ? `<button class="login-btn" onclick="window.location='/auth/login'">
-             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-             Se connecter avec Google
-           </button>`
-        : `<p style="font-size:12px;color:var(--text3)">Configurez GOOGLE_CLIENT_ID dans docker-compose.yml pour activer la connexion.</p>`}
+      <button class="login-btn" onclick="closeAuthSheet();startDeviceLogin()">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Se connecter avec Google
+      </button>
       <button class="auth-sheet-close" onclick="closeAuthSheet()">Fermer</button>`;
   }
   backdrop.classList.add('open');
@@ -1324,16 +1471,6 @@ function cancelAutoNext() {
   if (autoNextTimer) { clearInterval(autoNextTimer); autoNextTimer = null; }
   document.getElementById('autonext-overlay')?.classList.add('hidden');
 }
-
-// ── Gestion erreur auth_error dans l'URL ──────────────────────────────────────
-(function() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('auth_error')) {
-    const msg = params.get('auth_error');
-    showToast(msg === '1' ? 'Connexion annulée' : `Erreur auth : ${msg}`, 4000);
-    window.history.replaceState({}, '', '/');
-  }
-})();
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 renderContinueWatching();
