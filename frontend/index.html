@@ -389,6 +389,15 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
 }
 .q-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .q-btn:hover:not(.active) { background: var(--surface3); color: var(--text); }
+.pip-btn {
+  margin-left: auto; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text2); font-size: 12px; padding: 5px 12px; border-radius: 8px;
+  cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 6px;
+  font-family: 'DM Sans', sans-serif; font-weight: 500; white-space: nowrap;
+}
+.pip-btn:hover { background: var(--surface3); color: var(--text); }
+.pip-btn.active { background: var(--surface3); border-color: var(--text3); color: var(--text); }
+.pip-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
 
 /* ══ SPONSORBLOCK ════════════════════════════════════════════════════════════ */
 .sb-panel {
@@ -698,7 +707,15 @@ video { width: 100%; display: block; max-height: 66vh; background: #000; }
             </div>
           </div>
         </div>
-        <div class="quality-bar" id="quality-bar"></div>
+        <div class="quality-bar" id="quality-bar">
+          <button class="pip-btn" id="pip-btn" onclick="togglePiP()" title="Picture in Picture" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor" stroke="none"/>
+            </svg>
+            PiP
+          </button>
+        </div>
         <div id="sb-panel"></div>
         <div id="video-meta"></div>
       </div>
@@ -1306,6 +1323,8 @@ async function openVideo(videoId, resumeAt = 0) {
     startSBMonitor();
     loadRelated(videoId, info.title);
     startProgressTracking();
+    initPiP();
+    setupMediaSession(info.title, info.channel, info.thumbnail);
 
   } catch {
     document.getElementById('video-meta').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Impossible de charger la vidéo</div></div>`;
@@ -1338,6 +1357,98 @@ function startProgressTracking() {
     const m = currentVideoMeta;
     saveProgress(currentVideoId, m.title, m.thumbnail, m.channel, p.duration, p.currentTime);
   }, 5000);
+}
+
+// ── Picture-in-Picture ────────────────────────────────────────────────────────
+function initPiP() {
+  const video  = document.getElementById('player');
+  const pipBtn = document.getElementById('pip-btn');
+
+  // Afficher le bouton seulement si le navigateur supporte PiP
+  const supported = !!(document.pictureInPictureEnabled ||
+                       video.webkitSupportsPresentationMode?.('picture-in-picture'));
+  pipBtn.style.display = supported ? 'flex' : 'none';
+
+  // Sync état du bouton
+  video.addEventListener('enterpictureinpicture', () => pipBtn.classList.add('active'));
+  video.addEventListener('leavepictureinpicture', () => pipBtn.classList.remove('active'));
+}
+
+async function togglePiP() {
+  const video = document.getElementById('player');
+  try {
+    // Standard (Chrome, Firefox, iOS 14+ Safari)
+    if (document.pictureInPictureEnabled) {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+      return;
+    }
+    // Webkit prefix (older iOS / Safari)
+    if (video.webkitSupportsPresentationMode?.('picture-in-picture')) {
+      video.webkitSetPresentationMode(
+        video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture'
+      );
+    }
+  } catch {
+    showToast('PiP non disponible sur cet appareil');
+  }
+}
+
+// Auto-PiP quand l'utilisateur quitte l'app (switch app, accueil)
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden || !currentVideoId) return;
+  const video = document.getElementById('player');
+  if (video.paused || document.pictureInPictureElement) return;
+  try {
+    if (document.pictureInPictureEnabled) {
+      await video.requestPictureInPicture();
+    } else if (video.webkitSupportsPresentationMode?.('picture-in-picture')) {
+      video.webkitSetPresentationMode('picture-in-picture');
+    }
+  } catch {}
+});
+
+// ── Media Session (écran de verrouillage iOS / Android) ───────────────────────
+function setupMediaSession(title, channel, thumbnail) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title:  title   || 'MyTube',
+    artist: channel || '',
+    album:  'MyTube',
+    artwork: thumbnail
+      ? [{ src: thumbnail, sizes: '512x512', type: 'image/jpeg' }]
+      : [],
+  });
+
+  const p = document.getElementById('player');
+  const seek = (delta) => { p.currentTime = Math.max(0, Math.min(p.duration || 0, p.currentTime + delta)); };
+
+  navigator.mediaSession.setActionHandler('play',         () => p.play());
+  navigator.mediaSession.setActionHandler('pause',        () => p.pause());
+  navigator.mediaSession.setActionHandler('seekbackward', (d) => seek(-(d?.seekOffset ?? 10)));
+  navigator.mediaSession.setActionHandler('seekforward',  (d) => seek(+(d?.seekOffset ?? 10)));
+  navigator.mediaSession.setActionHandler('seekto',       (d) => { if (d?.seekTime != null) p.currentTime = d.seekTime; });
+  navigator.mediaSession.setActionHandler('nexttrack',    relatedVideos.length ? () => openVideo(relatedVideos[0].id) : null);
+  navigator.mediaSession.setActionHandler('previoustrack', null);
+
+  // Sync position pour la barre de progression sur l'écran verr.
+  p.addEventListener('timeupdate', syncMediaPosition, { passive: true });
+}
+
+function syncMediaPosition() {
+  if (!('mediaSession' in navigator)) return;
+  const p = document.getElementById('player');
+  if (!p.duration) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration:     p.duration,
+      playbackRate: p.playbackRate,
+      position:     p.currentTime,
+    });
+  } catch {}
 }
 
 // ── Raccourcis clavier ────────────────────────────────────────────────────────
@@ -1430,6 +1541,10 @@ async function loadRelated(videoId, title = '') {
     const data = await (await fetch(`${API}/api/related/${videoId}${qs}`)).json();
     relatedVideos = data.results || [];
     renderRelated(relatedVideos);
+    // Mettre à jour le handler "nexttrack" maintenant qu'on a les recommandations
+    if ('mediaSession' in navigator && relatedVideos.length) {
+      navigator.mediaSession.setActionHandler('nexttrack', () => openVideo(relatedVideos[0].id));
+    }
   } catch {
     relatedVideos = [];
     panel.innerHTML = '';
