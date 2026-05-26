@@ -207,11 +207,12 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
 # Credentials publics de l'app "YouTube on TV" — aucune config nécessaire.
 _YTV_ID     = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
 _YTV_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
-_YTV_SCOPE  = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email"
+# Uniquement le scope YouTube — les scopes userinfo.* causent restricted_client
+# avec ce client ID (credentials publics de l'app YouTube TV).
+_YTV_SCOPE  = "https://www.googleapis.com/auth/youtube.readonly"
 
 _G_DEVICE = "https://oauth2.googleapis.com/device/code"
 _G_TOKEN  = "https://oauth2.googleapis.com/token"
-_G_ME     = "https://www.googleapis.com/oauth2/v2/userinfo"
 _YT_API   = "https://www.googleapis.com/youtube/v3"
 
 # poll_id → {device_code, expires_at}
@@ -266,12 +267,22 @@ async def auth_device_poll(poll_id: str, response: Response):
             return {"status": "error", "message": t.get("error_description", err)}
 
         access_token = t.get("access_token", "")
-        user = {"id": "", "name": "Utilisateur Google", "email": "", "picture": ""}
+        user = {"id": "", "name": "Utilisateur YouTube", "email": "", "picture": ""}
         try:
+            # Le client YouTube TV ne peut pas appeler userinfo Google.
+            # On récupère nom + avatar depuis l'API YouTube Channels (mine=true).
             async with httpx.AsyncClient(timeout=5) as c:
-                u = (await c.get(_G_ME, headers={"Authorization": f"Bearer {access_token}"})).json()
-            user = {"id": u.get("id",""), "name": u.get("name",""),
-                    "email": u.get("email",""), "picture": u.get("picture","")}
+                ch = (await c.get(f"{_YT_API}/channels",
+                    params={"part": "snippet", "mine": "true"},
+                    headers={"Authorization": f"Bearer {access_token}"}
+                )).json()
+            items = ch.get("items", [])
+            if items:
+                snippet = items[0].get("snippet", {})
+                thumbs  = snippet.get("thumbnails", {})
+                thumb   = (thumbs.get("medium") or thumbs.get("default") or {}).get("url", "")
+                user = {"id": items[0].get("id", ""), "name": snippet.get("title", ""),
+                        "email": "", "picture": thumb}
         except Exception:
             pass
 
