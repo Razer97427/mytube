@@ -32,9 +32,12 @@ app.add_middleware(
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 SPONSORBLOCK_API = os.getenv("SPONSORBLOCK_API", "https://sponsor.ajay.app")
 SESSION_SECRET   = os.getenv("SESSION_SECRET", secrets.token_hex(32))
-# Proxy VPN optionnel — ex: "http://vpn:8888" (gluetun HTTP proxy)
-# Laisser vide pour ne pas utiliser de VPN.
 PROXY_URL        = os.getenv("PROXY_URL", "").strip() or None
+# Credentials OAuth Google — créer les vôtres sur console.cloud.google.com
+# Type : "TV and Limited Input Devices" + scope youtube.readonly
+# Laisser vide pour utiliser les credentials publics (peuvent être révoqués).
+YOUTUBE_CLIENT_ID     = os.getenv("YOUTUBE_CLIENT_ID",     "").strip() or None
+YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "").strip() or None
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}
@@ -231,13 +234,14 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
     except Exception:
         return []
 
-# ── Auth Google — Device Code Flow (comme SmartTube / YouTube TV) ─────────────
-# Credentials publics de l'app "YouTube on TV" — aucune config nécessaire.
-_YTV_ID     = "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com"
-_YTV_SECRET = "SboVhoG9s0rNafixCSGGKXAT"
-# Uniquement le scope YouTube — les scopes userinfo.* causent restricted_client
-# avec ce client ID (credentials publics de l'app YouTube TV).
+# ── Auth Google — Device Code Flow ───────────────────────────────────────────
+# Utilise les credentials fournis dans l'env, sinon tente les credentials
+# publics YouTube TV (peuvent être révoqués par Google à tout moment).
+_YTV_ID     = (YOUTUBE_CLIENT_ID
+               or "861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com")
+_YTV_SECRET = (YOUTUBE_CLIENT_SECRET or "SboVhoG9s0rNafixCSGGKXAT")
 _YTV_SCOPE  = "https://www.googleapis.com/auth/youtube.readonly"
+_AUTH_CONFIGURED = bool(YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET)
 
 _G_DEVICE = "https://oauth2.googleapis.com/device/code"
 _G_TOKEN  = "https://oauth2.googleapis.com/token"
@@ -331,7 +335,11 @@ async def auth_device_poll(poll_id: str, response: Response):
 @app.get("/auth/status")
 async def auth_status(session_id: str = Cookie(default=None)):
     s = _get_session(session_id)
-    return {"authenticated": bool(s), "user": s["user"] if s else None}
+    return {
+        "authenticated":   bool(s),
+        "user":            s["user"] if s else None,
+        "auth_configured": _AUTH_CONFIGURED,
+    }
 
 @app.post("/auth/logout")
 async def auth_logout(response: Response, session_id: str = Cookie(default=None)):
@@ -502,15 +510,33 @@ async def get_related(video_id: str, q: str = "", session_id: str = Cookie(defau
 
 @app.get("/api/trending")
 async def get_trending(session_id: str = Cookie(default=None)):
-    """InnerTube FEtrending → fallback yt-dlp."""
+    """InnerTube FEtrending → yt-dlp avec pot token → ytsearch."""
     s     = _get_session(session_id)
     token = s["access_token"] if s else ""
+
+    # 1. InnerTube (le plus rapide, pas de quota)
     try:
         videos = await _it_browse("FEtrending", token)
         if videos:
             return {"results": videos[:40]}
-        with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
+    except Exception:
+        pass
+
+    # 2. yt-dlp avec pot token (contourne le bot-detection)
+    try:
+        pot = await fetch_pot_token()
+        with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True, **_pot_args(pot)})) as ydl:
             info = ydl.extract_info("https://www.youtube.com/feed/trending", download=False)
+        results = [_fmt_entry(e) for e in (info.get("entries") or [])[:40] if e]
+        if results:
+            return {"results": results}
+    except Exception:
+        pass
+
+    # 3. Recherche populaire en dernier recours
+    try:
+        with yt_dlp.YoutubeDL(get_ydl_opts({"extract_flat": True})) as ydl:
+            info = ydl.extract_info("ytsearch40:tendances musique france 2025", download=False)
         return {"results": [_fmt_entry(e) for e in (info.get("entries") or [])[:40] if e]}
     except Exception as e:
         raise HTTPException(500, str(e))

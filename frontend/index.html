@@ -909,7 +909,7 @@ let _pollInterval = null, _pollId = null, _pollIntervalS = 5;
 
 async function initAuth() {
   try { authState = await (await fetch(`${API}/auth/status`)).json(); }
-  catch { authState = { authenticated: false, user: null }; }
+  catch { authState = { authenticated: false, user: null, auth_configured: false }; }
   renderHeaderAuth();
   if (authState.authenticated) loadSubscriptions();
 }
@@ -971,6 +971,25 @@ async function doLogout() {
 }
 
 // ── Device code ───────────────────────────────────────────────────────────────
+const _AUTH_SETUP_GUIDE = `
+<h3 style="color:#ff6b6b">Configuration requise</h3>
+<p class="subtitle" style="text-align:left;line-height:1.7">
+Les credentials Google publics ont été révoqués.<br>
+Créez les vôtres en <strong>5 minutes</strong> :
+</p>
+<ol style="text-align:left;font-size:13px;color:var(--text2);line-height:2;padding-left:20px;margin-bottom:20px">
+  <li>Aller sur <a href="https://console.cloud.google.com" target="_blank" rel="noopener" style="color:#3ea6ff">console.cloud.google.com</a></li>
+  <li>Créer un projet (nom quelconque)</li>
+  <li><strong>APIs &amp; Services → Activer YouTube Data API v3</strong></li>
+  <li>Écran consentement OAuth → Externe → Ajouter scope <code>youtube.readonly</code></li>
+  <li><strong>Identifiants → Créer → ID client OAuth → TV et appareils à saisie limitée</strong></li>
+  <li>Copier l'ID client et le secret dans le fichier <code>.env</code> :</li>
+</ol>
+<pre style="background:#1a1a1a;border-radius:8px;padding:12px;font-size:12px;text-align:left;overflow:auto;margin-bottom:20px">YOUTUBE_CLIENT_ID=votre_client_id
+YOUTUBE_CLIENT_SECRET=votre_secret</pre>
+<p style="font-size:12px;color:var(--text3);margin-bottom:20px">Puis rebuilder : <code>docker compose up -d --build backend</code></p>
+<button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+
 async function startDeviceLogin() {
   closeHeaderUserMenu();
   const modal = document.getElementById('auth-modal');
@@ -978,10 +997,26 @@ async function startDeviceLogin() {
   modal.innerHTML = `<div class="loader" style="padding:32px 0"><div class="spinner"></div><span>Connexion à Google…</span></div>`;
   let data;
   try {
-    data = await (await fetch(`${API}/auth/device/start`)).json();
-    if (!data.poll_id) throw new Error(data.detail||'Erreur');
+    const resp = await fetch(`${API}/auth/device/start`);
+    data = await resp.json();
+    if (!resp.ok || !data.poll_id) {
+      const msg = data.detail || data.error_description || data.error || 'Erreur inconnue';
+      // Si les credentials sont bloqués, afficher le guide de configuration
+      if (msg.includes('restricted_client') || msg.includes('unauthorized_client') ||
+          msg.includes('invalid_client') || msg.includes('access_denied')) {
+        modal.innerHTML = _AUTH_SETUP_GUIDE;
+      } else {
+        modal.innerHTML = `<h3>Erreur de connexion</h3>
+          <p class="subtitle" style="font-family:monospace;font-size:12px;background:#1a1a1a;padding:12px;border-radius:8px">${escHtml(msg)}</p>
+          <button class="auth-btn-primary" onclick="startDeviceLogin()" style="margin:0 auto 12px">Réessayer</button>
+          <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+      }
+      return;
+    }
   } catch(e) {
-    modal.innerHTML = `<h3>Erreur</h3><p class="subtitle">${escHtml(String(e))}</p><button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
+    modal.innerHTML = `<h3>Erreur réseau</h3>
+      <p class="subtitle">${escHtml(String(e))}</p>
+      <button class="auth-modal-close" onclick="closeAuthModal()">Fermer</button>`;
     return;
   }
   _pollId = data.poll_id; _pollIntervalS = data.interval||5;
@@ -991,7 +1026,7 @@ async function startDeviceLogin() {
     <div class="device-code-box">
       <div class="device-code-label">Votre code</div>
       <div class="device-code">${escHtml(data.user_code)}</div>
-      <a class="device-url-btn" href="${escHtml(data.verification_url)}" target="_blank" rel="noopener">
+      <a class="device-url-btn" href="${escHtml(data.verification_url||'https://google.com/device')}" target="_blank" rel="noopener">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         Ouvrir google.com/device
       </a>
@@ -1009,20 +1044,28 @@ async function pollDeviceCode() {
   try {
     const d = await (await fetch(`${API}/auth/device/poll?poll_id=${_pollId}`)).json();
     if (d.status === 'authorized') {
-      stopDevicePoll(); authState = { authenticated: true, user: d.user };
+      stopDevicePoll();
+      authState = { ...authState, authenticated: true, user: d.user };
       closeAuthModal(); closeAuthSheet();
       renderHeaderAuth(); loadSubscriptions();
       showToast(`Connecté — ${d.user?.name||'Google'}`);
       showPersonalFeed();
     } else if (d.status === 'expired' || d.status === 'error') {
       stopDevicePoll();
-      document.getElementById('auth-modal').innerHTML = `
-        <h3>${d.status==='expired'?'Code expiré':'Erreur'}</h3>
-        <p class="subtitle">${d.status==='expired'?'Le code a expiré.':escHtml(d.message||'')}</p>
-        <button class="auth-btn-primary" onclick="startDeviceLogin()" style="margin:0 auto 12px">Réessayer</button>
-        <button class="auth-modal-close" onclick="closeAuthModal()">Annuler</button>`;
+      const modal = document.getElementById('auth-modal');
+      if (d.status === 'error' && (d.message||'').includes('restricted_client')) {
+        modal.innerHTML = _AUTH_SETUP_GUIDE;
+      } else {
+        modal.innerHTML = `
+          <h3>${d.status==='expired'?'Code expiré':'Erreur'}</h3>
+          <p class="subtitle">${d.status==='expired'?'Le code a expiré.':escHtml(d.message||'Erreur inconnue')}</p>
+          <button class="auth-btn-primary" onclick="startDeviceLogin()" style="margin:0 auto 12px">Réessayer</button>
+          <button class="auth-modal-close" onclick="closeAuthModal()">Annuler</button>`;
+      }
     }
-  } catch {}
+  } catch(e) {
+    console.error('Poll error:', e);
+  }
 }
 function stopDevicePoll()    { if (_pollInterval) { clearInterval(_pollInterval); _pollInterval=null; } _pollId=null; }
 function cancelDeviceLogin() { stopDevicePoll(); closeAuthModal(); }
