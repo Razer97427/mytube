@@ -115,17 +115,27 @@ def _fmt_entry(e: dict) -> dict:
     }
 
 # ── InnerTube ─────────────────────────────────────────────────────────────────
-# InnerTube est l'API interne de YouTube (utilisée par leur propre site web).
-# On utilise la clé publique du client web — pas besoin de compte développeur.
-_IT_KEY  = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 _IT_BASE = "https://www.youtube.com/youtubei/v1"
-_IT_CTX  = {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00",
-                        "hl": "fr", "gl": "FR"}}
+_IT_VER  = "2.20250526.01.00"
+_IT_CTX  = {"client": {
+    "clientName": "WEB",
+    "clientVersion": _IT_VER,
+    "hl": "fr",
+    "gl": "FR",
+    "platform": "DESKTOP",
+}}
 
 def _it_headers(token: str = "") -> dict:
-    h = {"Content-Type": "application/json",
-         "Origin": "https://www.youtube.com",
-         "Referer": "https://www.youtube.com/"}
+    h = {
+        "Content-Type": "application/json",
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/126.0.0.0 Safari/537.36"),
+        "X-YouTube-Client-Name": "1",
+        "X-YouTube-Client-Version": _IT_VER,
+        "Origin": "https://www.youtube.com",
+        "Referer": "https://www.youtube.com/",
+    }
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -152,29 +162,46 @@ def _parse_renderer(r: dict) -> dict | None:
     return {"id": vid, "title": title, "channel": ch, "duration": dur, "thumbnail": thumb,
             "views_text": (r.get("viewCountText") or {}).get("simpleText", "")}
 
+# Parcours récursif : trouve tous les videoRenderer/compactVideoRenderer
+# quelle que soit la profondeur — résistant aux changements de structure YouTube.
+_VIDEO_RENDERER_KEYS = ("videoRenderer", "gridVideoRenderer", "compactVideoRenderer")
+
+def _collect_renderers(obj, out: list, limit: int = 60) -> None:
+    if len(out) >= limit:
+        return
+    if isinstance(obj, dict):
+        for key in _VIDEO_RENDERER_KEYS:
+            if key in obj:
+                v = _parse_renderer(obj[key])
+                if v:
+                    out.append(v)
+                return
+        for val in obj.values():
+            _collect_renderers(val, out, limit)
+    elif isinstance(obj, list):
+        for item in obj:
+            _collect_renderers(item, out, limit)
+
 async def _it_next(video_id: str, token: str = "") -> list[dict]:
-    """Recommandations InnerTube — identiques à la sidebar 'À suivre' de YouTube."""
+    """Recommandations InnerTube — sidebar 'À suivre' de YouTube."""
     try:
         async with _yt_client(timeout=10) as c:
-            r = await c.post(f"{_IT_BASE}/next", params={"key": _IT_KEY},
+            r = await c.post(f"{_IT_BASE}/next",
                              json={"videoId": video_id, "context": _IT_CTX},
                              headers=_it_headers(token))
-        items = (r.json()
-                 .get("contents", {})
-                 .get("twoColumnWatchNextResults", {})
-                 .get("secondaryResults", {})
-                 .get("secondaryResults", {})
-                 .get("results", []))
-        out = []
-        for item in items:
-            rd = (item.get("compactVideoRenderer")
-                  or (item.get("compactAutoplayRenderer") or {})
-                     .get("contents", [{}])[0].get("compactVideoRenderer"))
-            if rd:
-                v = _parse_renderer(rd)
-                if v and v["id"] != video_id:
-                    out.append(v)
-        return out
+        data = r.json()
+        secondary = (data
+                     .get("contents", {})
+                     .get("twoColumnWatchNextResults", {})
+                     .get("secondaryResults", {})
+                     .get("secondaryResults", {})
+                     .get("results", []))
+        out: list[dict] = []
+        _collect_renderers(secondary, out, limit=20)
+        # Fallback : parcours complet si la structure a changé
+        if not out:
+            _collect_renderers(data, out, limit=20)
+        return [v for v in out if v["id"] != video_id]
     except Exception:
         return []
 
@@ -182,10 +209,12 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
     """Browse InnerTube : trending (FEtrending), accueil perso (FEwhat_to_watch)…"""
     try:
         async with _yt_client(timeout=12) as c:
-            r = await c.post(f"{_IT_BASE}/browse", params={"key": _IT_KEY},
+            r = await c.post(f"{_IT_BASE}/browse",
                              json={"browseId": browse_id, "context": _IT_CTX},
                              headers=_it_headers(token))
-        contents = (r.json()
+        data = r.json()
+        # Essai structure connue d'abord (plus rapide)
+        contents = (data
                     .get("contents", {})
                     .get("twoColumnBrowseResultsRenderer", {})
                     .get("tabs", [{}])[0]
@@ -193,24 +222,11 @@ async def _it_browse(browse_id: str, token: str = "") -> list[dict]:
                     .get("content", {})
                     .get("richGridRenderer", {})
                     .get("contents", []))
-        out = []
-        for item in contents:
-            rd = item.get("richItemRenderer", {}).get("content", {}).get("videoRenderer")
-            if rd:
-                v = _parse_renderer(rd)
-                if v:
-                    out.append(v)
-                continue
-            # Sections imbriquées (ex. "Meilleures tendances")
-            for sub in (item.get("richSectionRenderer", {})
-                           .get("content", {})
-                           .get("richShelfRenderer", {})
-                           .get("contents", [])):
-                rd2 = sub.get("richItemRenderer", {}).get("content", {}).get("videoRenderer")
-                if rd2:
-                    v = _parse_renderer(rd2)
-                    if v:
-                        out.append(v)
+        out: list[dict] = []
+        _collect_renderers(contents, out, limit=40)
+        # Fallback : parcours complet si structure inconnue ou vide
+        if not out:
+            _collect_renderers(data, out, limit=40)
         return out
     except Exception:
         return []
