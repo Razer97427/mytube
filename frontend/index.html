@@ -1094,6 +1094,7 @@ function showHome() {
   if (sbCheckInterval) clearInterval(sbCheckInterval);
   cancelAutoNext();
   sbSegments=[]; relatedVideos=[]; currentVideoId=null; currentVideoMeta={};
+  document.title = 'MyTube';
   setNavActive('nav-home'); setSNavActive('snav-home');
   renderContinueWatching();
   authState.authenticated ? showPersonalFeed() : loadTrending();
@@ -1277,6 +1278,10 @@ async function openVideo(videoId, resumeAt=0) {
     startSBMonitor();
     loadRelated(videoId, info.title);
     startProgressTracking();
+    // Titre visible dans la fenêtre PiP et l'onglet
+    document.title = info.title ? `${info.title} — MyTube` : 'MyTube';
+    document.getElementById('player').title = info.title || '';
+
     initPiP();
     setupMediaSession(info.title, info.channel, info.thumbnail);
   } catch {
@@ -1338,13 +1343,29 @@ document.addEventListener('visibilitychange', async ()=>{
 });
 
 // ── Media Session ─────────────────────────────────────────────────────────────
+let _mediaSessionHandler = null;
+
 function setupMediaSession(title, channel, thumbnail) {
   if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: title||'MyTube', artist: channel||'', album: 'MyTube',
-    artwork: thumbnail?[{src:thumbnail,sizes:'512x512',type:'image/jpeg'}]:[],
-  });
+
+  function applyMeta() {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  title   || 'MyTube',
+      artist: channel || '',
+      album:  '',           // vide — évite d'afficher "MyTube" comme album
+      artwork: thumbnail
+        ? [ {src: thumbnail, sizes: '512x512', type: 'image/jpeg'} ]
+        : [],
+    });
+  }
+  applyMeta();
+
   const p = document.getElementById('player');
+
+  // Le navigateur peut réinitialiser les métadonnées au changement de source.
+  // On les réapplique dès que la lecture démarre effectivement.
+  p.addEventListener('playing', applyMeta, { once: true });
+
   const seek = d => { p.currentTime = Math.max(0, Math.min(p.duration||0, p.currentTime+d)); };
   navigator.mediaSession.setActionHandler('play',         ()=>p.play());
   navigator.mediaSession.setActionHandler('pause',        ()=>p.pause());
@@ -1353,10 +1374,14 @@ function setupMediaSession(title, channel, thumbnail) {
   navigator.mediaSession.setActionHandler('seekto',       d=>{ if (d?.seekTime!=null) p.currentTime=d.seekTime; });
   navigator.mediaSession.setActionHandler('nexttrack',    relatedVideos.length?()=>openVideo(relatedVideos[0].id):null);
   navigator.mediaSession.setActionHandler('previoustrack', null);
-  p.addEventListener('timeupdate', ()=>{
+
+  // Sync barre de progression (écran verr.) — un seul listener
+  if (_mediaSessionHandler) p.removeEventListener('timeupdate', _mediaSessionHandler);
+  _mediaSessionHandler = () => {
     if (!p.duration) return;
-    try { navigator.mediaSession.setPositionState({duration:p.duration,playbackRate:p.playbackRate,position:p.currentTime}); } catch {}
-  }, {passive:true});
+    try { navigator.mediaSession.setPositionState({duration:p.duration, playbackRate:p.playbackRate, position:p.currentTime}); } catch {}
+  };
+  p.addEventListener('timeupdate', _mediaSessionHandler, {passive:true});
 }
 
 // ── Raccourcis clavier ────────────────────────────────────────────────────────
